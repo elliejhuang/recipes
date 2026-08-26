@@ -16,6 +16,7 @@ import { aggregateGroceries } from "./aggregate-groceries";
 import { categorize } from "./aisles";
 import { addDays } from "./dates";
 import { getWeekIngredients } from "./queries";
+import { estimateMacros } from "./nutrition";
 import { parseIngredientLine } from "./parse-ingredient";
 
 export type RecipeInput = {
@@ -80,6 +81,28 @@ async function writeLines(recipeId: number, input: RecipeInput) {
 }
 
 export async function saveRecipe(input: RecipeInput): Promise<number> {
+  // When a recipe arrives with no nutrition at all — most hand-typed ones, and
+  // plenty of imported ones — fall back to an estimate from the ingredients.
+  // Without this a recipe silently contributes zero to the week's macro totals
+  // while its own page happily shows an estimate, which is the kind of quiet
+  // inconsistency that makes you stop trusting the numbers.
+  let nutrition = input.nutrition ?? null;
+  let nutritionSource = input.nutritionSource ?? null;
+
+  const hasNutrition =
+    nutrition !== null && Object.values(nutrition).some((v) => v !== null);
+
+  if (!hasNutrition) {
+    const estimate = estimateMacros(
+      input.ingredientLines.map(parseIngredientLine),
+      input.servings,
+    );
+    if (estimate.matched > 0) {
+      nutrition = estimate.perServing;
+      nutritionSource = "estimated";
+    }
+  }
+
   const base = {
     title: input.title.trim() || "Untitled recipe",
     description: input.description?.trim() || null,
@@ -91,14 +114,14 @@ export async function saveRecipe(input: RecipeInput): Promise<number> {
     cookMinutes: input.cookMinutes ?? null,
     tags: input.tags.map((t) => t.trim().toLowerCase()).filter(Boolean),
     notes: input.notes?.trim() || null,
-    calories: input.nutrition?.calories ?? null,
-    proteinG: input.nutrition?.proteinG ?? null,
-    carbsG: input.nutrition?.carbsG ?? null,
-    fatG: input.nutrition?.fatG ?? null,
-    fiberG: input.nutrition?.fiberG ?? null,
-    sugarG: input.nutrition?.sugarG ?? null,
-    sodiumMg: input.nutrition?.sodiumMg ?? null,
-    nutritionSource: input.nutritionSource ?? null,
+    calories: nutrition?.calories ?? null,
+    proteinG: nutrition?.proteinG ?? null,
+    carbsG: nutrition?.carbsG ?? null,
+    fatG: nutrition?.fatG ?? null,
+    fiberG: nutrition?.fiberG ?? null,
+    sugarG: nutrition?.sugarG ?? null,
+    sodiumMg: nutrition?.sodiumMg ?? null,
+    nutritionSource,
     updatedAt: new Date(),
   };
 
@@ -332,16 +355,7 @@ export async function generateGroceryList(weekStart: string) {
     existing.filter((item) => item.checked).map((item) => item.name.toLowerCase()),
   );
 
-  const generated = aggregateGroceries(
-    rows.map((row) => ({
-      name: row.ingredient.name,
-      quantity: row.ingredient.quantity,
-      unit: row.ingredient.unit,
-      recipeTitle: row.recipeTitle,
-      recipeServings: row.recipeServings,
-      planServings: row.planServings,
-    })),
-  ).map((item) => ({
+  const generated = aggregateGroceries(rows).map((item) => ({
     ...item,
     weekStart,
     checked: previouslyChecked.has(item.name.toLowerCase()),

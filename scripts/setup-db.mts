@@ -5,7 +5,10 @@
  * Safe to re-run — applied migrations are skipped and an existing bucket is
  * left alone.
  */
-import "dotenv/config";
+// Next reads .env.local; a plain script has to be told to. Later files don't
+// override earlier ones, so .env.local wins, matching Next's precedence.
+import { config } from "dotenv";
+config({ path: [".env.local", ".env"], quiet: true });
 import { drizzle } from "drizzle-orm/postgres-js";
 import { migrate } from "drizzle-orm/postgres-js/migrator";
 import postgres from "postgres";

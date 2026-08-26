@@ -1,4 +1,10 @@
-import { KNOWN_UNITS, MODIFIERS, normalizeUnit, parseQuantity } from "./units";
+import {
+  KNOWN_UNITS,
+  MODIFIERS,
+  normalizeUnit,
+  parseQuantity,
+  toBase,
+} from "./units";
 
 export type ParsedIngredient = {
   raw: string;
@@ -43,7 +49,8 @@ export function parseIngredientLine(line: string): ParsedIngredient {
     .replace(/\s+/g, " ")
     .trim();
 
-  const { value: quantity, length } = parseQuantity(working);
+  let { value: quantity } = parseQuantity(working);
+  const { length } = parseQuantity(working);
   if (length > 0) working = working.slice(length).trim();
 
   // A size word can sit between the amount and the unit — "2 medium cloves
@@ -72,8 +79,43 @@ export function parseIngredientLine(line: string): ParsedIngredient {
 
   if (leadingModifiers.length) note = leadingModifiers.join(" ");
 
+  // An abbreviated unit leaves its full stop behind: "1 tsp. baking soda"
+  // matches "tsp" and strands the "." at the head of the name.
+  working = working.replace(/^\.\s*/, "");
+
   // "of" after a unit is filler: "2 cups of flour".
   working = working.replace(/^of\s+/i, "");
+
+  // Compound amounts — "1½ cups plus 1 Tbsp. flour". Sum them when the units
+  // are compatible, so this merges with plain "2 tbsp flour" on a shopping
+  // list instead of becoming its own line named "1 tbsp. flour".
+  const joiner = working.match(/^(?:plus|and|\+)\s+/i);
+  if (joiner && quantity !== null) {
+    const rest = working.slice(joiner[0].length);
+    const second = parseQuantity(rest);
+
+    if (second.value !== null) {
+      let afterSecond = rest.slice(second.length).trim();
+      const secondUnitMatch = afterSecond.match(/^([A-Za-z.]+)\b/);
+
+      if (secondUnitMatch && isUnitToken(secondUnitMatch[1])) {
+        const secondUnit = normalizeUnit(secondUnitMatch[1]);
+        afterSecond = afterSecond
+          .slice(secondUnitMatch[0].length)
+          .replace(/^\.\s*/, "")
+          .trim();
+
+        const primaryBase = toBase(quantity, unit);
+        const secondBase = toBase(second.value, secondUnit);
+        const unitSize = unit ? toBase(1, unit) : null;
+
+        if (primaryBase !== null && secondBase !== null && unitSize) {
+          quantity = (primaryBase + secondBase) / unitSize;
+          working = afterSecond;
+        }
+      }
+    }
+  }
 
   // Everything after the comma is preparation, not identity: "onion, finely
   // diced" is still onion on a shopping list.
@@ -157,10 +199,22 @@ export function canonicalName(name: string): string {
   // Depluralize, minus the words where the plural is the normal form.
   const keepPlural = new Set(["greens", "grits", "oats", "sprouts", "chives", "molasses", "hummus", "couscous", "asparagus"]);
   if (!keepPlural.has(n)) {
-    if (n.endsWith("ies")) n = n.slice(0, -3) + "y";
+    // -ves words need their singular back before the generic -s rule turns
+    // "leaves" into "leave".
+    if (/(?:^|\s)(?:lea|loa|kni|hal|shel)ves$/.test(n)) n = n.slice(0, -3) + "f";
+    else if (n.endsWith("ies")) n = n.slice(0, -3) + "y";
     else if (/(ch|sh|ss|x|z)es$/.test(n)) n = n.slice(0, -2);
     else if (n.endsWith("oes")) n = n.slice(0, -2);
     else if (n.endsWith("s") && !n.endsWith("ss") && !n.endsWith("us")) n = n.slice(0, -1);
   }
+  // "basil leaves" and "basil" are the same purchase. Only fold the suffix for
+  // herbs though — "bay leaves" is its own thing and "bay" would be nonsense.
+  const HERBS = new Set([
+    "basil", "mint", "sage", "cilantro", "coriander", "parsley", "oregano",
+    "thyme", "tarragon", "rosemary", "dill", "chive",
+  ]);
+  const suffix = n.match(/^(.+?)\s+(?:leaf|leave|sprig|stem)s?$/);
+  if (suffix && HERBS.has(suffix[1].trim())) n = suffix[1].trim();
+
   return n.trim();
 }

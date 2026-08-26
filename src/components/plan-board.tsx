@@ -2,7 +2,7 @@
 
 import { useMemo, useState, useTransition } from "react";
 import Link from "next/link";
-import { Plus, Search, X } from "lucide-react";
+import { ArrowRightLeft, Plus, Search, X } from "lucide-react";
 import { clsx } from "clsx";
 import type { Recipe } from "@/db/schema";
 import {
@@ -131,6 +131,7 @@ export function PlanBoard({
                           <PlanTile
                             key={entry.id}
                             entry={entry}
+                            weekStart={weekStart}
                             onDragStart={() => setDragging(entry.id)}
                             onDragEnd={() => setDragging(null)}
                           />
@@ -185,14 +186,17 @@ export function PlanBoard({
 
 function PlanTile({
   entry,
+  weekStart,
   onDragStart,
   onDragEnd,
 }: {
   entry: PlanEntry;
+  weekStart: string;
   onDragStart: () => void;
   onDragEnd: () => void;
 }) {
   const [, startTransition] = useTransition();
+  const [moving, setMoving] = useState(false);
 
   return (
     <div
@@ -203,10 +207,54 @@ function PlanTile({
     >
       <Link
         href={`/recipes/${entry.recipe.id}`}
-        className="block pr-4 text-xs leading-snug font-medium hover:text-accent"
+        className="block pr-9 text-xs leading-snug font-medium hover:text-accent"
       >
         {entry.recipe.title}
       </Link>
+
+      {moving && (
+        // Dragging is a nicety that doesn't exist on a touchscreen, so every
+        // move is also reachable through plain selects.
+        <div className="mt-1.5 space-y-1">
+          <select
+            value={entry.date}
+            onChange={(e) =>
+              startTransition(() => {
+                setMoving(false);
+                void movePlanEntry(entry.id, e.target.value, entry.meal);
+              })
+            }
+            aria-label="Day"
+            className="w-full rounded border border-rule bg-card px-1 py-0.5 text-[11px]"
+          >
+            {weekDays(weekStart).map((day) => {
+              const { weekday, date } = formatDayLabel(day);
+              return (
+                <option key={day} value={day}>
+                  {weekday} {date}
+                </option>
+              );
+            })}
+          </select>
+          <select
+            value={entry.meal}
+            onChange={(e) =>
+              startTransition(() => {
+                setMoving(false);
+                void movePlanEntry(entry.id, entry.date, e.target.value);
+              })
+            }
+            aria-label="Meal"
+            className="w-full rounded border border-rule bg-card px-1 py-0.5 text-[11px] capitalize"
+          >
+            {MEALS.map((meal) => (
+              <option key={meal} value={meal}>
+                {meal}
+              </option>
+            ))}
+          </select>
+        </div>
+      )}
 
       <div className="mt-1 flex items-center gap-1.5">
         <input
@@ -228,13 +276,23 @@ function PlanTile({
         </span>
       </div>
 
-      <button
-        onClick={() => startTransition(() => void removeFromPlan(entry.id))}
-        aria-label="Remove from plan"
-        className="absolute top-1 right-1 text-faint opacity-0 group-hover:opacity-100 hover:text-accent focus-visible:opacity-100"
-      >
-        <X size={12} />
-      </button>
+      <div className="absolute top-1 right-1 flex gap-0.5">
+        <button
+          onClick={() => setMoving((m) => !m)}
+          aria-label="Move to another day or meal"
+          aria-expanded={moving}
+          className="text-faint hover:text-accent"
+        >
+          <ArrowRightLeft size={11} />
+        </button>
+        <button
+          onClick={() => startTransition(() => void removeFromPlan(entry.id))}
+          aria-label="Remove from plan"
+          className="text-faint hover:text-accent"
+        >
+          <X size={12} />
+        </button>
+      </div>
     </div>
   );
 }

@@ -1,4 +1,7 @@
-import { and, asc, desc, eq, getTableColumns, gte, ilike, lte, or, sql } from "drizzle-orm";
+import {
+  and, asc, desc, eq, getTableColumns, gte, ilike, inArray, lte, or, sql,
+} from "drizzle-orm";
+import { batchesNeeded } from "./aggregate-groceries";
 import { db } from "@/db";
 import {
   groceryItems,
@@ -159,22 +162,61 @@ export async function getWeekPlan(
   }));
 }
 
-/** All ingredient rows for the recipes planned in a week, with plan servings. */
+/**
+ * Every ingredient needed for a week, with how many batches of each recipe
+ * the plan calls for.
+ *
+ * Ingredients are fetched once per distinct recipe rather than once per plan
+ * entry — cooking the same thing on Monday and Thursday is two batches of one
+ * ingredient list, not two copies of it.
+ */
 export async function getWeekIngredients(weekStart: string, weekEnd: string) {
-  const rows = await db
+  const planned = await db
     .select({
-      ingredient: ingredients,
-      recipeTitle: recipes.title,
+      recipeId: mealPlanEntries.recipeId,
+      title: recipes.title,
       recipeServings: recipes.servings,
-      planServings: mealPlanEntries.servings,
+      plannedServings: sql<number>`SUM(${mealPlanEntries.servings})::float`,
     })
     .from(mealPlanEntries)
     .innerJoin(recipes, eq(mealPlanEntries.recipeId, recipes.id))
-    .innerJoin(ingredients, eq(ingredients.recipeId, recipes.id))
     .where(
       and(gte(mealPlanEntries.date, weekStart), lte(mealPlanEntries.date, weekEnd)),
+    )
+    .groupBy(mealPlanEntries.recipeId, recipes.title, recipes.servings);
+
+  if (!planned.length) return [];
+
+  const rows = await db
+    .select({
+      recipeId: ingredients.recipeId,
+      name: ingredients.name,
+      quantity: ingredients.quantity,
+      unit: ingredients.unit,
+    })
+    .from(ingredients)
+    .where(
+      inArray(
+        ingredients.recipeId,
+        planned.map((p) => p.recipeId),
+      ),
     );
-  return rows;
+
+  const byRecipe = new Map(planned.map((p) => [p.recipeId, p]));
+
+  return rows.flatMap((row) => {
+    const plan = byRecipe.get(row.recipeId);
+    if (!plan) return [];
+    return [
+      {
+        name: row.name,
+        quantity: row.quantity,
+        unit: row.unit,
+        recipeTitle: plan.title,
+        batches: batchesNeeded(plan.plannedServings, plan.recipeServings),
+      },
+    ];
+  });
 }
 
 export async function getGroceryList(weekStart: string) {

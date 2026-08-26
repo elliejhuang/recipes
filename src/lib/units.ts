@@ -169,6 +169,13 @@ export function humanizeAmount(
     if (cups >= 0.245 && isFriendlyCupAmount(cups)) {
       return { quantity: cups, unit: "cup" };
     }
+    // A cup or more that doesn't land on a mark — 1.56 cups of flour, say —
+    // rounds up to the next quarter cup. This is a shopping quantity, not a
+    // measurement: buying slightly over is right, and "25 tbsp" is not an
+    // amount anyone puts in a basket.
+    if (cups >= 1) {
+      return { quantity: Math.ceil(cups * 4 - 0.02) / 4, unit: "cup" };
+    }
 
     if (baseAmount >= VOLUME_ML.tbsp * 0.98)
       return { quantity: baseAmount / VOLUME_ML.tbsp, unit: "tbsp" };
@@ -284,7 +291,10 @@ export function formatUnit(unit: string | null, quantity: number | null): string
   if (!unit) return "";
   const abbreviations = new Set(["tsp", "tbsp", "oz", "lb", "g", "kg", "ml", "l", "floz"]);
   if (abbreviations.has(unit)) return unit === "floz" ? "fl oz" : unit;
-  if (quantity !== null && quantity > 1) {
+  // Round before comparing: a cup summed from millilitres lands on 1.00005,
+  // which would otherwise pluralise to "1 cups".
+  const rounded = quantity === null ? null : Math.round(quantity * 100) / 100;
+  if (rounded !== null && rounded > 1) {
     if (unit === "leaf") return "leaves";
     if (unit === "loaf") return "loaves";
     if (unit === "box") return "boxes";
