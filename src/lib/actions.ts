@@ -82,7 +82,10 @@ export async function saveRecipe(input: RecipeInput): Promise<number> {
   const hasNutrition =
     nutrition !== null && Object.values(nutrition).some((v) => v !== null);
 
-  if (!hasNutrition) {
+  // Re-estimate whenever the numbers came from an estimate in the first place,
+  // not just when they're missing — otherwise editing the ingredients of a
+  // recipe you typed in leaves the old estimate sitting there, quietly wrong.
+  if (!hasNutrition || nutritionSource === "estimated") {
     const estimate = estimateMacros(
       input.ingredientLines.map(parseIngredientLine),
       input.servings,

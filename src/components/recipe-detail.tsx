@@ -1,15 +1,12 @@
 "use client";
 
 import { useMemo, useState, useTransition } from "react";
-import { useRouter } from "next/navigation";
 import { Check, Minus, Plus } from "lucide-react";
 import { clsx } from "clsx";
 import type { Ingredient } from "@/db/schema";
-import { setRecipeFolders, updateRecipeField } from "@/lib/actions";
+import { updateRecipeField } from "@/lib/actions";
 import { estimateMacros, type Macros } from "@/lib/nutrition";
-import { formatQuantity, formatUnit } from "@/lib/units";
-import type { FolderWithCount } from "@/lib/queries";
-import { FolderPicker } from "./folder-bar";
+import { formatMeasure } from "@/lib/units";
 
 const NUTRIENTS = [
   { key: "calories", label: "Calories", suffix: "" },
@@ -26,22 +23,17 @@ export function RecipeDetail({
   ingredients,
   method,
   storedMacros,
-  folders,
-  folderIds,
+  nutritionSource,
 }: {
   recipeId: number;
   baseServings: number;
   ingredients: Ingredient[];
   method: string | null;
   storedMacros: Macros;
-  folders: FolderWithCount[];
-  folderIds: number[];
+  nutritionSource: string | null;
 }) {
-  const router = useRouter();
   const [servings, setServings] = useState(baseServings);
   const [ticked, setTicked] = useState<Set<number>>(new Set());
-  const [selectedFolders, setSelectedFolders] = useState(folderIds);
-  const [, startTransition] = useTransition();
 
   const scale = servings / Math.max(1, baseServings);
 
@@ -53,6 +45,7 @@ export function RecipeDetail({
     [ingredients, baseServings],
   );
   const macros = hasStored ? storedMacros : estimate.perServing;
+  const isEstimated = !hasStored || nutritionSource === "estimated";
 
   const toggle = (id: number) =>
     setTicked((current) => {
@@ -120,10 +113,7 @@ export function RecipeDetail({
                     >
                       {ingredient.quantity !== null && (
                         <span className="font-medium tabular-nums">
-                          {`${formatQuantity(ingredient.quantity * scale)} ${formatUnit(
-                            ingredient.unit,
-                            ingredient.quantity * scale,
-                          )}`.trim()}{" "}
+                          {formatMeasure(ingredient.quantity * scale, ingredient.unit)}{" "}
                         </span>
                       )}
                       {ingredient.name ?? ingredient.raw}
@@ -140,22 +130,8 @@ export function RecipeDetail({
           </ul>
         </div>
 
-        <NutritionPanel macros={macros} />
+        <NutritionPanel macros={macros} isEstimated={isEstimated} />
 
-        {folders.length > 0 && (
-          <FolderPicker
-            recipeId={recipeId}
-            folders={folders}
-            selected={selectedFolders}
-            onChange={(next) => {
-              setSelectedFolders(next);
-              startTransition(async () => {
-                await setRecipeFolders(recipeId, next);
-                router.refresh();
-              });
-            }}
-          />
-        )}
       </aside>
 
       <EditableNotes recipeId={recipeId} initial={method} />
@@ -164,7 +140,13 @@ export function RecipeDetail({
 }
 
 /** Flat rows. A hierarchy of type sizes made these harder to read, not easier. */
-function NutritionPanel({ macros }: { macros: Macros }) {
+function NutritionPanel({
+  macros,
+  isEstimated,
+}: {
+  macros: Macros;
+  isEstimated: boolean;
+}) {
   if (macros.calories === null && macros.proteinG === null) return null;
 
   return (
@@ -185,6 +167,13 @@ function NutritionPanel({ macros }: { macros: Macros }) {
           );
         })}
       </dl>
+      {isEstimated && (
+        // Worth saying out loud: these are added up from the ingredient list,
+        // not published by anyone.
+        <p className="mt-2.5 border-t border-rule pt-2 text-[11px] text-faint">
+          Added up from the ingredients
+        </p>
+      )}
     </div>
   );
 }
@@ -205,6 +194,12 @@ function EditableNotes({
   const [editing, setEditing] = useState(false);
   const [saved, setSaved] = useState(false);
   const [, startTransition] = useTransition();
+
+  // Stored as plain text and edited as plain text; one line is one step.
+  const steps = value
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean);
 
   const save = () => {
     setEditing(false);
@@ -238,10 +233,21 @@ function EditableNotes({
       ) : (
         <button
           onClick={() => setEditing(true)}
-          className="w-full rounded-xl border border-transparent px-3 py-2 text-left leading-relaxed whitespace-pre-wrap hover:border-rule hover:bg-card"
+          className="w-full rounded-xl border border-transparent px-3 py-2 text-left hover:border-rule hover:bg-card"
         >
-          {value || (
+          {steps.length === 0 ? (
             <span className="text-faint">Tap to write how you make it.</span>
+          ) : (
+            <ol className="space-y-3">
+              {steps.map((step, index) => (
+                <li key={index} className="flex gap-3">
+                  <span className="mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full border border-rule text-xs font-medium tabular-nums text-muted">
+                    {index + 1}
+                  </span>
+                  <span className="text-[15px] leading-relaxed">{step}</span>
+                </li>
+              ))}
+            </ol>
           )}
         </button>
       )}

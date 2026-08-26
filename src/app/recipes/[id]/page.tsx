@@ -1,11 +1,11 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { ExternalLink, Pencil } from "lucide-react";
-import { FavoriteButton } from "@/components/favorite-button";
 import { ForkButton } from "@/components/fork-button";
 import { PhotoGallery } from "@/components/photo-gallery";
 import { PlanButton } from "@/components/plan-button";
 import { RecipeDetail } from "@/components/recipe-detail";
+import { RecipeFolders } from "@/components/recipe-folders";
 import { getRecipe, listFolders } from "@/lib/queries";
 import { photosEnabled } from "@/lib/supabase";
 
@@ -47,6 +47,14 @@ export default async function RecipePage({
                 {recipe.sourceName ?? "Source"}
               </a>
             )}
+
+            <div className="no-print mt-3">
+              <RecipeFolders
+                recipeId={recipe.id}
+                folders={folders}
+                initial={recipe.folderIds}
+              />
+            </div>
           </div>
 
           {heroUrl && (
@@ -61,7 +69,6 @@ export default async function RecipePage({
 
         <div className="no-print mt-5 flex flex-wrap items-center gap-2">
           <PlanButton recipeId={recipe.id} isPlanned={recipe.isPlanned} />
-          <FavoriteButton id={recipe.id} isFavorite={recipe.isFavorite} />
           <Link href={`/recipes/${recipe.id}/edit`} className="btn">
             <Pencil size={14} />
             Edit
@@ -75,8 +82,7 @@ export default async function RecipePage({
         baseServings={recipe.servings}
         ingredients={recipe.ingredients}
         method={recipe.method}
-        folders={folders}
-        folderIds={recipe.folderIds}
+        nutritionSource={recipe.nutritionSource}
         storedMacros={{
           calories: recipe.calories,
           proteinG: recipe.proteinG,

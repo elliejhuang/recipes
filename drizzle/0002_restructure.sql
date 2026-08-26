@@ -67,7 +67,7 @@ DROP TABLE "meal_plan_entries" CASCADE;
 --> statement-breakpoint
 -- Every list gets a home. The auto list is rebuilt from the plan, so its old
 -- generated rows are disposable; hand-added ones are carried over.
-INSERT INTO "grocery_lists" ("name", "is_auto", "position") VALUES ('From my plan', true, 0);
+INSERT INTO "grocery_lists" ("name", "is_auto", "position") VALUES ('To Make', true, 0);
 --> statement-breakpoint
 ALTER TABLE "grocery_items" ADD COLUMN "list_id" integer;
 --> statement-breakpoint

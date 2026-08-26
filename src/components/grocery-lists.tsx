@@ -1,7 +1,7 @@
 "use client";
 
 import { useRef, useState, useTransition } from "react";
-import { Check, Plus, Trash2, X } from "lucide-react";
+import { ArrowLeft, Check, Plus, Trash2, X } from "lucide-react";
 import { clsx } from "clsx";
 import {
   addGroceryItem,
@@ -14,54 +14,82 @@ import {
   toggleGroceryItem,
 } from "@/lib/actions";
 import type { ListWithItems } from "@/lib/queries";
-import { formatQuantity, formatUnit } from "@/lib/units";
+import { formatMeasure } from "@/lib/units";
 
 export function GroceryLists({ lists }: { lists: ListWithItems[] }) {
-  const [activeId, setActiveId] = useState(lists[0]?.id ?? null);
+  const [openId, setOpenId] = useState<number | null>(null);
   const [, startTransition] = useTransition();
 
-  const active = lists.find((l) => l.id === activeId) ?? lists[0];
+  const open = lists.find((l) => l.id === openId);
+
+  if (open) {
+    return (
+      <div>
+        <button
+          onClick={() => setOpenId(null)}
+          className="mb-3 flex items-center gap-1.5 text-sm text-muted hover:text-ink"
+        >
+          <ArrowLeft size={15} />
+          All lists
+        </button>
+        <SingleList key={open.id} list={open} />
+      </div>
+    );
+  }
 
   return (
-    <div>
-      <div className="-mx-4 mb-4 flex items-center gap-1.5 overflow-x-auto px-4 pb-1 [scrollbar-width:none] sm:mx-0 sm:flex-wrap sm:px-0 [&::-webkit-scrollbar]:hidden">
-        {lists.map((list) => {
-          const outstanding = list.items.filter((i) => !i.checked).length;
-          return (
-            <button
-              key={list.id}
-              onClick={() => setActiveId(list.id)}
-              className={clsx(
-                "shrink-0 rounded-full border px-3 py-1.5 text-sm",
-                list.id === active?.id
-                  ? "border-accent bg-accent-soft text-accent"
-                  : "border-rule bg-card text-muted hover:border-faint",
-              )}
-            >
-              {list.name}
-              {outstanding > 0 && (
-                <span className="ml-1.5 text-xs text-faint tabular-nums">
-                  {outstanding}
-                </span>
-              )}
-            </button>
-          );
-        })}
+    <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
+      {lists.map((list) => {
+        const outstanding = list.items.filter((i) => !i.checked).length;
+        return (
+          <button
+            key={list.id}
+            onClick={() => setOpenId(list.id)}
+            className="group text-left"
+          >
+            <div className="flex aspect-square flex-col justify-start rounded-xl border border-rule bg-card p-3 transition-colors group-hover:border-faint">
+              <ul className="space-y-1 overflow-hidden">
+                {list.items.slice(0, 5).map((item) => (
+                  <li
+                    key={item.id}
+                    className={clsx(
+                      "truncate text-xs",
+                      item.checked ? "text-faint line-through" : "text-muted",
+                    )}
+                  >
+                    {item.name}
+                  </li>
+                ))}
+                {list.items.length === 0 && (
+                  <li className="text-xs text-faint">Empty</li>
+                )}
+              </ul>
+            </div>
+            <div className="mt-1.5 px-0.5">
+              <div className="truncate text-sm font-medium">{list.name}</div>
+              <div className="text-xs text-faint tabular-nums">
+                {outstanding} to buy
+              </div>
+            </div>
+          </button>
+        );
+      })}
 
+      <div>
         <button
           onClick={() =>
             startTransition(async () => {
               const id = await createGroceryList("New list");
-              setActiveId(id);
+              setOpenId(id);
             })
           }
-          className="shrink-0 rounded-full border border-dashed border-rule px-3 py-1.5 text-sm text-muted hover:border-accent hover:text-accent"
+          className="flex aspect-square w-full flex-col items-center justify-center gap-1.5 rounded-xl border border-dashed border-rule text-muted hover:border-accent hover:text-accent"
         >
-          <Plus size={13} className="inline" /> List
+          <Plus size={20} />
+          <span className="text-xs">New list</span>
         </button>
+        <div className="mt-1.5 px-0.5 text-sm font-medium text-transparent">.</div>
       </div>
-
-      {active && <SingleList key={active.id} list={active} />}
     </div>
   );
 }
@@ -173,9 +201,9 @@ function Row({ item }: { item: ListWithItems["items"][number] }) {
   const [name, setName] = useState(item.name);
   const [, startTransition] = useTransition();
 
-  const amount = item.quantity
-    ? `${formatQuantity(item.quantity)} ${formatUnit(item.unit, item.quantity)}`.trim()
-    : "";
+  // "butter (¾ cup)" — the thing you're looking for on the shelf leads, and
+  // the amount is the detail you check once you've found it.
+  const amount = formatMeasure(item.quantity, item.unit);
 
   return (
     <li className="group flex items-start gap-3 py-2">
@@ -192,13 +220,11 @@ function Row({ item }: { item: ListWithItems["items"][number] }) {
         {item.checked && <Check size={12} strokeWidth={3} />}
       </button>
 
-      <div className={clsx("min-w-0 flex-1", item.checked && "opacity-45")}>
+      {/* Ticking something off strikes it through and changes nothing else —
+          the amount and what it's for are exactly what you re-read when you
+          wonder whether you already grabbed it. */}
+      <div className="min-w-0 flex-1">
         <div className="flex items-baseline gap-1.5">
-          {amount && (
-            <span className="shrink-0 text-[15px] font-medium tabular-nums">
-              {amount}
-            </span>
-          )}
           <input
             value={name}
             onChange={(e) => setName(e.target.value)}
@@ -213,8 +239,18 @@ function Row({ item }: { item: ListWithItems["items"][number] }) {
               item.checked && "line-through",
             )}
           />
+          {amount && (
+            <span
+              className={clsx(
+                "shrink-0 text-[15px] text-muted tabular-nums",
+                item.checked && "line-through",
+              )}
+            >
+              ({amount})
+            </span>
+          )}
         </div>
-        {item.detail && !item.checked && (
+        {item.detail && (
           <p className="text-[11px] leading-snug text-faint">{item.detail}</p>
         )}
       </div>

@@ -11,7 +11,7 @@ export default async function PlanPage() {
   return (
     <div>
       <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
-        <h1 className="font-serif text-xl font-semibold">To make</h1>
+        <h1 className="font-serif text-xl font-semibold">To Make</h1>
         {plan.length > 0 && (
           <div className="flex items-center gap-2">
             <ClearPlanButton />

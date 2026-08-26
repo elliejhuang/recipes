@@ -150,6 +150,46 @@ export async function listFolders(): Promise<FolderWithCount[]> {
     .orderBy(asc(folders.position), asc(folders.id));
 }
 
+/** Folders with a few images each, for the album tiles. */
+export async function listFolderAlbums(): Promise<
+  (FolderWithCount & { covers: string[] })[]
+> {
+  const cover = coverPhotoQuery();
+
+  const [folderRows, members] = await Promise.all([
+    listFolders(),
+    db
+      .select({
+        folderId: recipeFolders.folderId,
+        image: sql<string | null>`COALESCE(${cover.url}, ${recipes.imageUrl})`,
+      })
+      .from(recipeFolders)
+      .innerJoin(recipes, eq(recipeFolders.recipeId, recipes.id))
+      .leftJoin(cover, eq(cover.recipeId, recipes.id))
+      .orderBy(desc(recipes.createdAt)),
+  ]);
+
+  return folderRows.map((folder) => ({
+    ...folder,
+    covers: members
+      .filter((m) => m.folderId === folder.id && m.image)
+      .slice(0, 4)
+      .map((m) => m.image as string),
+  }));
+}
+
+/** Images for the "All" tile. */
+export async function recentCovers(limit = 4): Promise<string[]> {
+  const cover = coverPhotoQuery();
+  const rows = await db
+    .select({ image: sql<string | null>`COALESCE(${cover.url}, ${recipes.imageUrl})` })
+    .from(recipes)
+    .leftJoin(cover, eq(cover.recipeId, recipes.id))
+    .orderBy(desc(recipes.createdAt))
+    .limit(limit * 3);
+  return rows.map((r) => r.image).filter((x): x is string => Boolean(x)).slice(0, limit);
+}
+
 /* ----------------------------------------------------------------- plan --- */
 
 export type PlanEntry = { id: number; position: number; recipe: RecipeWithCover };
@@ -246,7 +286,7 @@ export async function ensureAutoList(): Promise<GroceryList> {
 
   const [created] = await db
     .insert(groceryLists)
-    .values({ name: "From my plan", isAuto: true, position: 0 })
+    .values({ name: "To Make", isAuto: true, position: 0 })
     .returning();
   return created;
 }

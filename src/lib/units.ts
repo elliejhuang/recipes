@@ -286,6 +286,82 @@ export function formatQuantity(n: number | null | undefined): string {
   return String(parseFloat(rounded.toFixed(decimals)));
 }
 
+/**
+ * Writes an amount the way a recipe would.
+ *
+ * Summing a compound amount ("1½ cups plus 1 Tbsp.") gives 1.5625 cups, and
+ * "1.56 cups" is not a thing anyone can measure. When the number doesn't land
+ * on a mark, split it into the largest amount that does plus a remainder in the
+ * next unit down — back into "1½ cups + 1 tbsp".
+ */
+export function formatMeasure(
+  quantity: number | null | undefined,
+  unit: string | null,
+): string {
+  if (quantity === null || quantity === undefined) return "";
+
+  const plain = `${formatQuantity(quantity)} ${formatUnit(unit, quantity)}`.trim();
+  if (unitFamily(unit) !== "volume") return plain;
+
+  // Already a measure you own, or too small to be worth splitting.
+  const rounded = Math.round(quantity * 1000) / 1000;
+  if (Number.isInteger(rounded) || isKitchenFraction(rounded)) return plain;
+
+  const base = toBase(quantity, unit);
+  const unitSize = unit ? toBase(1, unit) : null;
+  if (base === null || !unitSize) return plain;
+
+  const smaller = NEXT_SMALLER[unit ?? ""];
+  if (!smaller) return plain;
+
+  const whole = Math.floor(rounded);
+  const smallerSize = toBase(1, smaller)!;
+
+  // Try each mark on the cup and keep whichever leaves a remainder that lands
+  // cleanly in the smaller unit. Taking the largest that merely fits gives
+  // "⅓ cup + 1 tbsp" for six tablespoons, when "¼ cup + 2 tbsp" is exact.
+  let best: { major: number; count: number; error: number } | null = null;
+
+  for (const fraction of [0.75, 2 / 3, 0.5, 1 / 3, 0.25, 0]) {
+    const major = whole + fraction;
+    if (major <= 0 || major > rounded + 1e-9) continue;
+
+    const count = Math.round((base - major * unitSize) / smallerSize);
+    if (count < 0) continue;
+
+    const error = Math.abs(base - (major * unitSize + count * smallerSize));
+    if (!best || error < best.error - 1e-9) best = { major, count, error };
+  }
+
+  if (!best) return plain;
+  const { major, count: smallerCount } = best;
+
+  if (smallerCount <= 0) {
+    return `${formatQuantity(major)} ${formatUnit(unit, major)}`.trim();
+  }
+
+  return (
+    `${formatQuantity(major)} ${formatUnit(unit, major)} + ` +
+    `${formatQuantity(smallerCount)} ${formatUnit(smaller, smallerCount)}`
+  );
+}
+
+/** cup → tbsp → tsp, the ladder a remainder falls down. */
+const NEXT_SMALLER: Record<string, string> = {
+  gallon: "quart",
+  quart: "cup",
+  cup: "tbsp",
+  tbsp: "tsp",
+  l: "ml",
+};
+
+function isKitchenFraction(n: number): boolean {
+  const frac = n - Math.floor(n);
+  return [0, 0.25, 1 / 3, 0.5, 2 / 3, 0.75].some(
+    (target) => Math.abs(frac - target) < 0.02,
+  );
+}
+
 /** Pluralizes a unit for display. Abbreviations never pluralize. */
 export function formatUnit(unit: string | null, quantity: number | null): string {
   if (!unit) return "";
