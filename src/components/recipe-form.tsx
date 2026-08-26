@@ -9,9 +9,8 @@ import { estimateMacros, type Macros } from "@/lib/nutrition";
 import { parseIngredientLine } from "@/lib/parse-ingredient";
 import { formatQuantity, formatUnit } from "@/lib/units";
 
-export type FormValues = Omit<RecipeInput, "ingredientLines" | "stepLines"> & {
+export type FormValues = Omit<RecipeInput, "ingredientLines"> & {
   ingredientText: string;
-  stepText: string;
 };
 
 const NUTRIENTS = [
@@ -21,7 +20,6 @@ const NUTRIENTS = [
   { key: "fatG", label: "Fat", unit: "g" },
   { key: "fiberG", label: "Fiber", unit: "g" },
   { key: "sugarG", label: "Sugar", unit: "g" },
-  { key: "sodiumMg", label: "Sodium", unit: "mg" },
 ] as const;
 
 export function RecipeForm({
@@ -82,14 +80,7 @@ export function RecipeForm({
     setError(null);
     startTransition(async () => {
       try {
-        const id = await saveRecipe({
-          ...values,
-          ingredientLines: lines,
-          stepLines: values.stepText
-            .split(/\n\s*\n|\n/)
-            .map((s) => s.trim())
-            .filter(Boolean),
-        });
+        const id = await saveRecipe({ ...values, ingredientLines: lines });
         router.push(`/recipes/${id}`);
       } catch (e) {
         setError(e instanceof Error ? e.message : "Couldn't save that.");
@@ -114,20 +105,6 @@ export function RecipeForm({
         </div>
 
         <div>
-          <label className="label" htmlFor="description">
-            Description
-          </label>
-          <textarea
-            id="description"
-            value={values.description ?? ""}
-            onChange={(e) => set("description", e.target.value)}
-            rows={2}
-            placeholder="One line on what it is or when you'd make it."
-            className="field resize-y"
-          />
-        </div>
-
-        <div>
           <div className="flex items-baseline justify-between">
             <label className="label" htmlFor="ingredients">
               Ingredients
@@ -146,18 +123,15 @@ export function RecipeForm({
         </div>
 
         <div>
-          <div className="flex items-baseline justify-between">
-            <label className="label" htmlFor="steps">
-              Steps
-            </label>
-            <span className="mb-1.5 text-xs text-faint">one per line</span>
-          </div>
+          <label className="label" htmlFor="method">
+            Notes
+          </label>
           <textarea
-            id="steps"
-            value={values.stepText}
-            onChange={(e) => set("stepText", e.target.value)}
+            id="method"
+            value={values.method ?? ""}
+            onChange={(e) => set("method", e.target.value)}
             rows={8}
-            placeholder={"Heat the oil in a large skillet over medium.\nAdd the onion and cook until soft, about 8 minutes."}
+            placeholder={"Grill 6 min a side.\n400°F, 25 min.\nDon't crowd the pan."}
             className="field resize-y leading-relaxed"
           />
         </div>
@@ -195,24 +169,6 @@ export function RecipeForm({
             suffix="min"
             value={values.cookMinutes ?? null}
             onChange={(n) => set("cookMinutes", n)}
-          />
-        </div>
-
-        <div>
-          <label className="label" htmlFor="tags">
-            Tags
-          </label>
-          <input
-            id="tags"
-            value={values.tags.join(", ")}
-            onChange={(e) =>
-              set(
-                "tags",
-                e.target.value.split(",").map((t) => t.trim()).filter(Boolean),
-              )
-            }
-            placeholder="weeknight, vegetarian, italian"
-            className="field"
           />
         </div>
 

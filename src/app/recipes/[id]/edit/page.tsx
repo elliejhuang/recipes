@@ -33,7 +33,6 @@ export default async function EditRecipePage({
         initial={{
           id: recipe.id,
           title: recipe.title,
-          description: recipe.description ?? "",
           imageUrl: recipe.imageUrl ?? "",
           sourceUrl: recipe.sourceUrl ?? "",
           sourceName: recipe.sourceName ?? "",
@@ -41,9 +40,9 @@ export default async function EditRecipePage({
           prepMinutes: recipe.prepMinutes,
           cookMinutes: recipe.cookMinutes,
           tags: recipe.tags,
+          method: recipe.method ?? "",
           notes: recipe.notes ?? "",
           ingredientText: recipe.ingredients.map((i) => i.raw).join("\n"),
-          stepText: recipe.steps.map((s) => s.text).join("\n"),
           nutrition: {
             calories: recipe.calories,
             proteinG: recipe.proteinG,

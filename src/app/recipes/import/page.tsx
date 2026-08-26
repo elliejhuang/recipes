@@ -148,7 +148,6 @@ export default function ImportPage() {
 function toFormValues(recipe: ImportedRecipe): FormValues {
   return {
     title: recipe.title,
-    description: recipe.description ?? "",
     imageUrl: recipe.imageUrl ?? "",
     sourceUrl: recipe.sourceUrl,
     sourceName: recipe.sourceName ?? "",
@@ -158,7 +157,7 @@ function toFormValues(recipe: ImportedRecipe): FormValues {
     tags: recipe.tags,
     notes: "",
     ingredientText: recipe.ingredientLines.join("\n"),
-    stepText: recipe.stepLines.join("\n"),
+    method: recipe.stepLines.join("\n"),
     nutrition: recipe.nutrition,
     nutritionSource: recipe.nutrition ? "imported" : null,
   };

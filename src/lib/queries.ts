@@ -1,29 +1,28 @@
-import {
-  and, asc, desc, eq, exists, getTableColumns, gte, ilike, inArray, lte, or, sql,
-} from "drizzle-orm";
-import { batchesNeeded } from "./aggregate-groceries";
+import { and, asc, desc, eq, exists, getTableColumns, ilike, inArray, or, sql } from "drizzle-orm";
 import { db } from "@/db";
 import {
+  folders,
   groceryItems,
+  groceryLists,
   ingredients,
-  mealPlanEntries,
   photos,
+  planItems,
+  recipeFolders,
   recipes,
-  steps,
+  type Folder,
+  type GroceryItem,
+  type GroceryList,
   type Ingredient,
   type Photo,
   type Recipe,
-  type Step,
 } from "@/db/schema";
 
 export type FullRecipe = Recipe & {
   ingredients: Ingredient[];
-  steps: Step[];
   photos: Photo[];
-  /** The recipe this was adapted from, if any. */
-  forkedFrom: { id: number; title: string } | null;
-  /** Versions of this recipe you've made yourself. */
-  forks: { id: number; title: string }[];
+  folderIds: number[];
+  /** Whether this recipe is currently on the "want to make" shelf. */
+  isPlanned: boolean;
 };
 
 /** A recipe plus whichever photo should represent it in a list. */
@@ -35,8 +34,7 @@ export type RecipeWithCover = Recipe & { coverPhotoUrl: string | null };
  * Built as a joinable subquery rather than a correlated one written by hand:
  * inside a raw `sql` template drizzle emits column references unqualified, so
  * `photos.recipe_id = recipes.id` came out as `p.recipe_id = "id"`, which
- * Postgres happily resolved against the *inner* table. Every recipe got the
- * same photo and nothing errored. Column helpers qualify properly.
+ * Postgres happily resolved against the *inner* table. Column helpers qualify.
  */
 function coverPhotoQuery() {
   return db
@@ -51,7 +49,7 @@ function coverPhotoQuery() {
 
 export async function listRecipes(options?: {
   search?: string;
-  tag?: string;
+  folderId?: number;
   favoritesOnly?: boolean;
 }): Promise<RecipeWithCover[]> {
   const filters = [];
@@ -61,8 +59,7 @@ export async function listRecipes(options?: {
     filters.push(
       or(
         ilike(recipes.title, term),
-        ilike(recipes.description, term),
-        // Matching ingredients is what makes "what can I do with leeks?" work.
+        // Matching ingredients is what makes "what can I make with leeks" work.
         exists(
           db
             .select({ one: sql`1` })
@@ -77,12 +74,24 @@ export async function listRecipes(options?: {
       ),
     );
   }
-  if (options?.tag) {
-    filters.push(sql`${options.tag} = ANY(${recipes.tags})`);
+
+  if (options?.folderId) {
+    filters.push(
+      exists(
+        db
+          .select({ one: sql`1` })
+          .from(recipeFolders)
+          .where(
+            and(
+              eq(recipeFolders.recipeId, recipes.id),
+              eq(recipeFolders.folderId, options.folderId),
+            ),
+          ),
+      ),
+    );
   }
-  if (options?.favoritesOnly) {
-    filters.push(eq(recipes.isFavorite, true));
-  }
+
+  if (options?.favoritesOnly) filters.push(eq(recipes.isFavorite, true));
 
   const cover = coverPhotoQuery();
 
@@ -98,111 +107,81 @@ export async function getRecipe(id: number): Promise<FullRecipe | null> {
   const [recipe] = await db.select().from(recipes).where(eq(recipes.id, id));
   if (!recipe) return null;
 
-  const [recipeIngredients, recipeSteps, recipePhotos, forks, forkedFrom] =
-    await Promise.all([
-      db
-        .select()
-        .from(ingredients)
-        .where(eq(ingredients.recipeId, id))
-        .orderBy(asc(ingredients.position)),
-      db
-        .select()
-        .from(steps)
-        .where(eq(steps.recipeId, id))
-        .orderBy(asc(steps.position)),
-      db
-        .select()
-        .from(photos)
-        .where(eq(photos.recipeId, id))
-        .orderBy(desc(photos.isCover), asc(photos.position)),
-      db
-        .select({ id: recipes.id, title: recipes.title })
-        .from(recipes)
-        .where(eq(recipes.forkedFromId, id)),
-      recipe.forkedFromId
-        ? db
-            .select({ id: recipes.id, title: recipes.title })
-            .from(recipes)
-            .where(eq(recipes.id, recipe.forkedFromId))
-        : Promise.resolve([]),
-    ]);
+  const [recipeIngredients, recipePhotos, assigned, planned] = await Promise.all([
+    db
+      .select()
+      .from(ingredients)
+      .where(eq(ingredients.recipeId, id))
+      .orderBy(asc(ingredients.position)),
+    db
+      .select()
+      .from(photos)
+      .where(eq(photos.recipeId, id))
+      .orderBy(desc(photos.isCover), asc(photos.position)),
+    db
+      .select({ folderId: recipeFolders.folderId })
+      .from(recipeFolders)
+      .where(eq(recipeFolders.recipeId, id)),
+    db.select({ id: planItems.id }).from(planItems).where(eq(planItems.recipeId, id)),
+  ]);
 
   return {
     ...recipe,
     ingredients: recipeIngredients,
-    steps: recipeSteps,
     photos: recipePhotos,
-    forks,
-    forkedFrom: forkedFrom[0] ?? null,
+    folderIds: assigned.map((row) => row.folderId),
+    isPlanned: planned.length > 0,
   };
 }
 
-export async function getAllTags(): Promise<{ tag: string; count: number }[]> {
-  const rows = await db
+/* -------------------------------------------------------------- folders --- */
+
+export type FolderWithCount = Folder & { count: number };
+
+export async function listFolders(): Promise<FolderWithCount[]> {
+  return db
     .select({
-      tag: sql<string>`unnest(${recipes.tags})`.as("tag"),
-      count: sql<number>`count(*)::int`.as("count"),
+      ...getTableColumns(folders),
+      count: sql<number>`count(${recipeFolders.recipeId})::int`,
     })
-    .from(recipes)
-    .groupBy(sql`1`)
-    .orderBy(sql`2 DESC`);
-  return rows;
+    .from(folders)
+    .leftJoin(recipeFolders, eq(recipeFolders.folderId, folders.id))
+    .groupBy(folders.id)
+    .orderBy(asc(folders.position), asc(folders.id));
 }
 
-export type PlanEntry = {
-  id: number;
-  date: string;
-  meal: string;
-  servings: number;
-  position: number;
-  recipe: Recipe;
-};
+/* ----------------------------------------------------------------- plan --- */
 
-export async function getWeekPlan(
-  weekStart: string,
-  weekEnd: string,
-): Promise<PlanEntry[]> {
+export type PlanEntry = { id: number; position: number; recipe: RecipeWithCover };
+
+export async function getPlan(): Promise<PlanEntry[]> {
+  const cover = coverPhotoQuery();
+
   const rows = await db
-    .select({ entry: mealPlanEntries, recipe: recipes })
-    .from(mealPlanEntries)
-    .innerJoin(recipes, eq(mealPlanEntries.recipeId, recipes.id))
-    .where(
-      and(gte(mealPlanEntries.date, weekStart), lte(mealPlanEntries.date, weekEnd)),
-    )
-    .orderBy(asc(mealPlanEntries.date), asc(mealPlanEntries.position));
+    .select({
+      id: planItems.id,
+      position: planItems.position,
+      recipe: getTableColumns(recipes),
+      coverPhotoUrl: cover.url,
+    })
+    .from(planItems)
+    .innerJoin(recipes, eq(planItems.recipeId, recipes.id))
+    .leftJoin(cover, eq(cover.recipeId, recipes.id))
+    .orderBy(asc(planItems.position), asc(planItems.id));
 
-  return rows.map(({ entry, recipe }) => ({
-    id: entry.id,
-    date: entry.date,
-    meal: entry.meal,
-    servings: entry.servings,
-    position: entry.position,
-    recipe,
+  return rows.map((row) => ({
+    id: row.id,
+    position: row.position,
+    recipe: { ...row.recipe, coverPhotoUrl: row.coverPhotoUrl },
   }));
 }
 
-/**
- * Every ingredient needed for a week, with how many batches of each recipe
- * the plan calls for.
- *
- * Ingredients are fetched once per distinct recipe rather than once per plan
- * entry — cooking the same thing on Monday and Thursday is two batches of one
- * ingredient list, not two copies of it.
- */
-export async function getWeekIngredients(weekStart: string, weekEnd: string) {
+/** Every ingredient the plan calls for, one batch of each recipe. */
+export async function getPlanIngredients() {
   const planned = await db
-    .select({
-      recipeId: mealPlanEntries.recipeId,
-      title: recipes.title,
-      recipeServings: recipes.servings,
-      plannedServings: sql<number>`SUM(${mealPlanEntries.servings})::float`,
-    })
-    .from(mealPlanEntries)
-    .innerJoin(recipes, eq(mealPlanEntries.recipeId, recipes.id))
-    .where(
-      and(gte(mealPlanEntries.date, weekStart), lte(mealPlanEntries.date, weekEnd)),
-    )
-    .groupBy(mealPlanEntries.recipeId, recipes.title, recipes.servings);
+    .select({ recipeId: planItems.recipeId, title: recipes.title })
+    .from(planItems)
+    .innerJoin(recipes, eq(planItems.recipeId, recipes.id));
 
   if (!planned.length) return [];
 
@@ -221,27 +200,53 @@ export async function getWeekIngredients(weekStart: string, weekEnd: string) {
       ),
     );
 
-  const byRecipe = new Map(planned.map((p) => [p.recipeId, p]));
+  const titles = new Map(planned.map((p) => [p.recipeId, p.title]));
 
   return rows.flatMap((row) => {
-    const plan = byRecipe.get(row.recipeId);
-    if (!plan) return [];
-    return [
-      {
-        name: row.name,
-        quantity: row.quantity,
-        unit: row.unit,
-        recipeTitle: plan.title,
-        batches: batchesNeeded(plan.plannedServings, plan.recipeServings),
-      },
-    ];
+    const title = titles.get(row.recipeId);
+    if (!title) return [];
+    // One batch each: the shelf says "make this", not "make this twice".
+    return [{ ...row, recipeTitle: title, batches: 1 }];
   });
 }
 
-export async function getGroceryList(weekStart: string) {
-  return db
+/* ------------------------------------------------------------ groceries --- */
+
+export type ListWithItems = GroceryList & { items: GroceryItem[] };
+
+export async function getGroceryLists(): Promise<ListWithItems[]> {
+  const [lists, items] = await Promise.all([
+    db
+      .select()
+      .from(groceryLists)
+      .orderBy(desc(groceryLists.isAuto), asc(groceryLists.position), asc(groceryLists.id)),
+    db
+      .select()
+      .from(groceryItems)
+      .orderBy(asc(groceryItems.position), asc(groceryItems.id)),
+  ]);
+
+  return lists.map((list) => ({
+    ...list,
+    items: items.filter((item) => item.listId === list.id),
+  }));
+}
+
+/**
+ * The auto list, created on first use. Something has to be there before the
+ * plan can fill it, and a fresh database has no lists at all.
+ */
+export async function ensureAutoList(): Promise<GroceryList> {
+  const [existing] = await db
     .select()
-    .from(groceryItems)
-    .where(eq(groceryItems.weekStart, weekStart))
-    .orderBy(asc(groceryItems.aisle), asc(groceryItems.name));
+    .from(groceryLists)
+    .where(eq(groceryLists.isAuto, true))
+    .limit(1);
+  if (existing) return existing;
+
+  const [created] = await db
+    .insert(groceryLists)
+    .values({ name: "From my plan", isAuto: true, position: 0 })
+    .returning();
+  return created;
 }

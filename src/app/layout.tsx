@@ -1,12 +1,11 @@
 import type { Metadata, Viewport } from "next";
 import Link from "next/link";
-import { BookOpen, CalendarDays, ListChecks, Plus } from "lucide-react";
 import { DevStudioMount } from "@/components/dev-studio/mount";
 import "./globals.css";
 
 export const metadata: Metadata = {
   title: "Recipe Box",
-  description: "Your recipes, your week, your list.",
+  description: "Your recipes, what you want to make, and the list.",
 };
 
 export const viewport: Viewport = {
@@ -22,9 +21,9 @@ export const viewport: Viewport = {
 };
 
 const NAV = [
-  { href: "/", label: "Recipes", icon: BookOpen },
-  { href: "/plan", label: "Plan", icon: CalendarDays },
-  { href: "/list", label: "List", icon: ListChecks },
+  { href: "/", label: "Recipes" },
+  { href: "/plan", label: "To make" },
+  { href: "/list", label: "Groceries" },
 ];
 
 export default function RootLayout({
@@ -37,32 +36,19 @@ export default function RootLayout({
       <body className="min-h-dvh">
         <header className="no-print sticky top-0 z-30 border-b border-rule bg-paper/85 backdrop-blur">
           <div className="mx-auto flex h-14 max-w-5xl items-center gap-1 px-4 pt-[env(safe-area-inset-top)]">
-            <Link
-              href="/"
-              className="mr-1 font-serif text-lg font-semibold tracking-tight sm:mr-3"
-            >
-              <span className="sm:hidden">RB</span>
-              <span className="hidden sm:inline">Recipe Box</span>
-            </Link>
-
             <nav className="flex items-center gap-1">
-              {NAV.map(({ href, label, icon: Icon }) => (
+              {NAV.map(({ href, label }) => (
                 <Link
                   key={href}
                   href={href}
-                  className="flex items-center gap-1.5 rounded-lg px-2.5 py-2 text-sm text-muted hover:bg-card hover:text-ink"
+                  className="rounded-lg px-2.5 py-2 text-sm text-muted hover:bg-card hover:text-ink"
                 >
-                  <Icon size={15} strokeWidth={2} />
                   {label}
                 </Link>
               ))}
             </nav>
 
-            <Link
-              href="/recipes/new"
-              className="btn btn-primary ml-auto !px-3 !py-1.5 !text-sm"
-            >
-              <Plus size={15} strokeWidth={2.5} />
+            <Link href="/recipes/new" className="btn btn-primary ml-auto !px-3 !py-1.5 !text-sm">
               Add
             </Link>
           </div>

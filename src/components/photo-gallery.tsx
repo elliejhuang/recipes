@@ -2,21 +2,18 @@
 
 import { useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { Camera, ImagePlus, Loader2, Star, Trash2, X } from "lucide-react";
+import { ImagePlus, Loader2, Star, Trash2, X } from "lucide-react";
 import { clsx } from "clsx";
 import type { Photo } from "@/db/schema";
-import { setCoverPhoto, updatePhotoCaption, updatePhotoStep } from "@/lib/actions";
+import { setCoverPhoto, updatePhotoCaption } from "@/lib/actions";
 
 export function PhotoGallery({
   recipeId,
   photos,
-  steps,
   uploadsEnabled,
 }: {
   recipeId: number;
   photos: Photo[];
-  /** Used to offer "show this photo at step N". */
-  steps: { position: number; text: string }[];
   uploadsEnabled: boolean;
 }) {
   const router = useRouter();
@@ -64,12 +61,7 @@ export function PhotoGallery({
         <h2 className="text-xs font-semibold tracking-wider text-muted uppercase">
           Your photos
         </h2>
-        {photos.length > 0 && (
-          <span className="text-xs text-faint">
-            {photos.length} {photos.length === 1 ? "photo" : "photos"} · click one to
-            edit
-          </span>
-        )}
+
       </div>
 
       <div
@@ -135,14 +127,6 @@ export function PhotoGallery({
           )}
         </div>
 
-        {photos.length === 0 && uploadsEnabled && !uploading && (
-          <p className="mt-3 flex items-center gap-1.5 px-1 text-xs text-faint">
-            <Camera size={12} />
-            Drop photos here, or click the square. They become the recipe&rsquo;s
-            picture and stick around even if the original link breaks.
-          </p>
-        )}
-
         {!uploadsEnabled && (
           <p className="px-1 py-2 text-xs text-faint">
             Photo uploads need Supabase storage keys in <code>.env.local</code>.
@@ -165,7 +149,6 @@ export function PhotoGallery({
         <Lightbox
           photo={lightbox}
           recipeId={recipeId}
-          steps={steps}
           onClose={() => setLightbox(null)}
           onDelete={() => remove(lightbox.id)}
         />
@@ -177,13 +160,11 @@ export function PhotoGallery({
 function Lightbox({
   photo,
   recipeId,
-  steps,
   onClose,
   onDelete,
 }: {
   photo: Photo;
   recipeId: number;
-  steps: { position: number; text: string }[];
   onClose: () => void;
   onDelete: () => void;
 }) {
@@ -239,37 +220,6 @@ function Lightbox({
               className="field"
             />
           </div>
-
-          {steps.length > 0 && (
-            <div>
-              <label className="label" htmlFor="step">
-                Show it at a step
-              </label>
-              <select
-                id="step"
-                value={photo.stepPosition ?? ""}
-                onChange={(e) =>
-                  startTransition(async () => {
-                    await updatePhotoStep(
-                      photo.id,
-                      recipeId,
-                      e.target.value === "" ? null : Number(e.target.value),
-                    );
-                    router.refresh();
-                  })
-                }
-                className="field"
-              >
-                <option value="">Just in the gallery</option>
-                {steps.map((step, index) => (
-                  <option key={step.position} value={step.position}>
-                    {index + 1}. {step.text.slice(0, 60)}
-                    {step.text.length > 60 ? "…" : ""}
-                  </option>
-                ))}
-              </select>
-            </div>
-          )}
 
           <div className="flex flex-wrap gap-2">
             <button

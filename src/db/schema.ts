@@ -6,8 +6,8 @@ import {
   real,
   boolean,
   timestamp,
-  date,
   index,
+  primaryKey,
 } from "drizzle-orm/pg-core";
 import { relations } from "drizzle-orm";
 
@@ -24,6 +24,9 @@ export const recipes = pgTable(
     prepMinutes: integer("prep_minutes"),
     cookMinutes: integer("cook_minutes"),
     tags: text("tags").array().default([]).notNull(),
+    // Free text, not a step list. Imported recipes seed it from whatever the
+    // source published; mostly it stays short or empty.
+    method: text("method"),
     notes: text("notes"),
     isFavorite: boolean("is_favorite").default(false).notNull(),
 
@@ -74,25 +77,6 @@ export const ingredients = pgTable(
   (t) => [index("ingredients_recipe_idx").on(t.recipeId)],
 );
 
-export const steps = pgTable(
-  "steps",
-  {
-    id: serial("id").primaryKey(),
-    recipeId: integer("recipe_id")
-      .notNull()
-      .references(() => recipes.id, { onDelete: "cascade" }),
-    position: integer("position").notNull().default(0),
-    text: text("text").notNull(),
-    section: text("section"),
-  },
-  (t) => [index("steps_recipe_idx").on(t.recipeId)],
-);
-
-/**
- * Photos you took. Separate from `recipes.imageUrl`, which holds whatever
- * picture the original site published — your own shots take precedence over
- * it, and survive if that remote URL ever rots.
- */
 export const photos = pgTable(
   "photos",
   {
@@ -107,44 +91,79 @@ export const photos = pgTable(
     position: integer("position").notNull().default(0),
     // The one that represents the recipe in lists and cards.
     isCover: boolean("is_cover").default(false).notNull(),
-    // Optional: pin a photo to a step, for "this is what it looks like when
-    // the onions are done".
-    stepPosition: integer("step_position"),
     createdAt: timestamp("created_at").defaultNow().notNull(),
   },
   (t) => [index("photos_recipe_idx").on(t.recipeId)],
 );
 
-export const mealPlanEntries = pgTable(
-  "meal_plan_entries",
+/**
+ * Recipes you want to make. No dates and no meal slots — a shelf you add to
+ * and cook from, which is how the planning actually happened in practice.
+ */
+export const planItems = pgTable(
+  "plan_items",
   {
     id: serial("id").primaryKey(),
-    date: date("date").notNull(),
-    // "breakfast" | "lunch" | "dinner" | "snack"
-    meal: text("meal").notNull(),
     recipeId: integer("recipe_id")
       .notNull()
       .references(() => recipes.id, { onDelete: "cascade" }),
-    // How many servings of it you're actually making that day, which may
-    // differ from the recipe's own yield.
-    servings: real("servings").default(1).notNull(),
     position: integer("position").notNull().default(0),
     createdAt: timestamp("created_at").defaultNow().notNull(),
   },
-  (t) => [index("meal_plan_date_idx").on(t.date)],
+  (t) => [index("plan_items_recipe_idx").on(t.recipeId)],
 );
+
+/**
+ * Your own grouping of recipes. Separate from `recipes.tags`, which is
+ * whatever the source site published and is nobody's idea of a filing system.
+ */
+export const folders = pgTable("folders", {
+  id: serial("id").primaryKey(),
+  name: text("name").notNull(),
+  position: integer("position").notNull().default(0),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+
+export const recipeFolders = pgTable(
+  "recipe_folders",
+  {
+    recipeId: integer("recipe_id")
+      .notNull()
+      .references(() => recipes.id, { onDelete: "cascade" }),
+    folderId: integer("folder_id")
+      .notNull()
+      .references(() => folders.id, { onDelete: "cascade" }),
+  },
+  (t) => [
+    primaryKey({ columns: [t.recipeId, t.folderId] }),
+    index("recipe_folders_folder_idx").on(t.folderId),
+  ],
+);
+
+/**
+ * A shopping list. Exactly one is `isAuto`, rebuilt from the plan whenever the
+ * plan changes; the rest are yours to make and delete.
+ */
+export const groceryLists = pgTable("grocery_lists", {
+  id: serial("id").primaryKey(),
+  name: text("name").notNull(),
+  isAuto: boolean("is_auto").default(false).notNull(),
+  position: integer("position").notNull().default(0),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+});
 
 export const groceryItems = pgTable(
   "grocery_items",
   {
     id: serial("id").primaryKey(),
-    // Monday of the week this list belongs to.
-    weekStart: date("week_start").notNull(),
+    listId: integer("list_id")
+      .notNull()
+      .references(() => groceryLists.id, { onDelete: "cascade" }),
     name: text("name").notNull(),
     quantity: real("quantity"),
     unit: text("unit"),
-    aisle: text("aisle").default("Other").notNull(),
     checked: boolean("checked").default(false).notNull(),
+    position: integer("position").notNull().default(0),
     // Free text like "2 recipes" or the original lines, for provenance.
     detail: text("detail"),
     // True when you typed it in yourself rather than it coming from the plan,
@@ -152,18 +171,14 @@ export const groceryItems = pgTable(
     isManual: boolean("is_manual").default(false).notNull(),
     createdAt: timestamp("created_at").defaultNow().notNull(),
   },
-  (t) => [index("grocery_week_idx").on(t.weekStart)],
+  (t) => [index("grocery_list_idx").on(t.listId)],
 );
 
 export const recipesRelations = relations(recipes, ({ many }) => ({
   ingredients: many(ingredients),
-  steps: many(steps),
   photos: many(photos),
-  mealPlanEntries: many(mealPlanEntries),
-}));
-
-export const photosRelations = relations(photos, ({ one }) => ({
-  recipe: one(recipes, { fields: [photos.recipeId], references: [recipes.id] }),
+  planItems: many(planItems),
+  recipeFolders: many(recipeFolders),
 }));
 
 export const ingredientsRelations = relations(ingredients, ({ one }) => ({
@@ -173,20 +188,44 @@ export const ingredientsRelations = relations(ingredients, ({ one }) => ({
   }),
 }));
 
-export const stepsRelations = relations(steps, ({ one }) => ({
-  recipe: one(recipes, { fields: [steps.recipeId], references: [recipes.id] }),
+export const photosRelations = relations(photos, ({ one }) => ({
+  recipe: one(recipes, { fields: [photos.recipeId], references: [recipes.id] }),
 }));
 
-export const mealPlanRelations = relations(mealPlanEntries, ({ one }) => ({
+export const planItemsRelations = relations(planItems, ({ one }) => ({
+  recipe: one(recipes, { fields: [planItems.recipeId], references: [recipes.id] }),
+}));
+
+export const foldersRelations = relations(folders, ({ many }) => ({
+  recipeFolders: many(recipeFolders),
+}));
+
+export const recipeFoldersRelations = relations(recipeFolders, ({ one }) => ({
   recipe: one(recipes, {
-    fields: [mealPlanEntries.recipeId],
+    fields: [recipeFolders.recipeId],
     references: [recipes.id],
+  }),
+  folder: one(folders, {
+    fields: [recipeFolders.folderId],
+    references: [folders.id],
+  }),
+}));
+
+export const groceryListsRelations = relations(groceryLists, ({ many }) => ({
+  items: many(groceryItems),
+}));
+
+export const groceryItemsRelations = relations(groceryItems, ({ one }) => ({
+  list: one(groceryLists, {
+    fields: [groceryItems.listId],
+    references: [groceryLists.id],
   }),
 }));
 
 export type Recipe = typeof recipes.$inferSelect;
 export type Ingredient = typeof ingredients.$inferSelect;
-export type Step = typeof steps.$inferSelect;
 export type Photo = typeof photos.$inferSelect;
-export type MealPlanEntry = typeof mealPlanEntries.$inferSelect;
+export type PlanItem = typeof planItems.$inferSelect;
+export type Folder = typeof folders.$inferSelect;
+export type GroceryList = typeof groceryLists.$inferSelect;
 export type GroceryItem = typeof groceryItems.$inferSelect;

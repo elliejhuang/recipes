@@ -187,12 +187,5 @@ export async function PATCH(request: Request) {
       .where(eq(photos.id, id));
   }
 
-  if (body.stepPosition === null || Number.isInteger(body.stepPosition)) {
-    await db
-      .update(photos)
-      .set({ stepPosition: body.stepPosition })
-      .where(eq(photos.id, id));
-  }
-
   return NextResponse.json({ ok: true });
 }

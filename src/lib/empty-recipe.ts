@@ -2,7 +2,6 @@ import type { FormValues } from "@/components/recipe-form";
 
 export const EMPTY_FORM: FormValues = {
   title: "",
-  description: "",
   imageUrl: "",
   sourceUrl: "",
   sourceName: "",
@@ -10,9 +9,9 @@ export const EMPTY_FORM: FormValues = {
   prepMinutes: null,
   cookMinutes: null,
   tags: [],
+  method: "",
   notes: "",
   ingredientText: "",
-  stepText: "",
   nutrition: null,
   nutritionSource: null,
 };

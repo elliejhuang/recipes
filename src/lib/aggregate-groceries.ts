@@ -1,4 +1,3 @@
-import { categorize } from "./aisles";
 import { canonicalName } from "./parse-ingredient";
 import { humanizeAmount, toBase, unitFamily } from "./units";
 
@@ -18,7 +17,6 @@ export type AggregatedItem = {
   name: string;
   quantity: number | null;
   unit: string | null;
-  aisle: string;
   detail: string;
 };
 
@@ -49,7 +47,6 @@ export function batchesNeeded(
 export function aggregateGroceries(rows: GroceryInput[]): AggregatedItem[] {
   type Bucket = {
     display: string;
-    aisle: string;
     volumeMl: number;
     weightG: number;
     counts: Map<string, number>;
@@ -68,7 +65,6 @@ export function aggregateGroceries(rows: GroceryInput[]): AggregatedItem[] {
     if (!bucket) {
       bucket = {
         display: row.name,
-        aisle: categorize(row.name),
         volumeMl: 0,
         weightG: 0,
         counts: new Map(),
@@ -128,7 +124,6 @@ export function aggregateGroceries(rows: GroceryInput[]): AggregatedItem[] {
       name: bucket.display,
       quantity: primary ? round(primary.quantity) : null,
       unit: primary?.unit || null,
-      aisle: bucket.aisle,
       detail,
     };
   });
