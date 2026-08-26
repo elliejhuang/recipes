@@ -1,36 +1,83 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Recipe Box
 
-## Getting Started
+Your recipes, your week, your list. A personal recipe app that imports from any
+recipe site, plans a week of meals, builds the shopping list, and tracks macros.
 
-First, run the development server:
+## Getting a database
 
-```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
-```
+The app needs a Postgres connection string. Neon's free tier is enough and
+doesn't ask for a card.
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+1. Sign up at [neon.tech](https://neon.tech) and create a project
+2. Copy the **pooled** connection string from the dashboard
+3. `cp .env.example .env.local` and paste it in as `DATABASE_URL`
+4. `npm run db:setup` — creates the tables
+5. `npm run dev` — http://localhost:3000
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## What it does
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+**Recipe box.** Add recipes by hand or import them. Search across titles,
+descriptions, and ingredients, so "what can I make with leeks" is a real
+question you can ask it. Tag, favorite, print.
 
-## Learn More
+**Import from the web.** Paste a link and it pulls the title, image,
+ingredients, steps, times, servings, tags, and any nutrition the site
+published — then shows you the result to check before saving. This reads the
+schema.org Recipe data that nearly every recipe site embeds to get its Google
+rich card, so it works broadly and costs nothing. Paywalled and app-only
+recipes are the exception.
 
-To learn more about Next.js, take a look at the following resources:
+**Meal plan.** A Monday-to-Sunday grid, four meals a day. Drag between slots,
+set how many servings you're actually making, see calories and macros per day
+and averaged across the week.
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+**Shopping list.** Built from the week's plan. Amounts are scaled to the
+servings you planned and summed across recipes, so ⅓ cup of olive oil in one
+recipe and 2 tablespoons in another come out as one line reading "½ cup".
+Grouped by aisle. Anything you add by hand survives a rebuild, and so do the
+boxes you've already ticked.
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+**Macros.** Per serving, from three sources in order of trust: what the
+original site published, what you typed in, or an estimate added up from the
+ingredients. Estimates always say so and report how many ingredients they could
+actually price — an estimate that quietly skipped the butter is worse than no
+estimate.
 
-## Deploy on Vercel
+## How it's built
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+Next.js App Router, Postgres via Drizzle on Neon's HTTP driver, Tailwind.
+Everything is a Server Component reading the database directly, with Server
+Actions for writes; there's one API route, for the importer, because it needs
+to fetch and parse an external page.
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+The interesting code is in `src/lib`:
+
+| File | What it does |
+| --- | --- |
+| `units.ts` | Parses "1½", "¾", "2-3", "one" into numbers; converts and rounds units to what a cook would actually say |
+| `parse-ingredient.ts` | Splits an ingredient line into amount, unit, name, and prep note |
+| `import-recipe.ts` | Pulls schema.org Recipe data out of a web page, with a microdata fallback |
+| `aggregate-groceries.ts` | Scales and sums a week of ingredients into a shopping list |
+| `nutrition.ts` + `food-data.ts` | Estimates macros from ingredients, and reports its own coverage |
+| `aisles.ts` | Sorts a shopping list into supermarket sections |
+
+## Scripts
+
+| Command | |
+| --- | --- |
+| `npm run dev` | Development server |
+| `npm run db:setup` | Create tables from `drizzle/` |
+| `npm run db:generate` | Generate a migration after editing `src/db/schema.ts` |
+| `npm run db:studio` | Browse the data |
+| `npm run build` | Production build |
+
+There's also a development-only endpoint at `POST /api/seed` that takes the
+output of `/api/import` and saves it, which is the quick way to load a batch of
+recipes without clicking through the import screen once per link. It returns
+404 in production.
+
+## Deploying
+
+Push to GitHub, import the repo on Vercel, and set `DATABASE_URL` in the
+project's environment variables to the same Neon string. Nothing else to
+configure.
