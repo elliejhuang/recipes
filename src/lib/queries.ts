@@ -1,5 +1,5 @@
 import {
-  and, asc, desc, eq, getTableColumns, gte, ilike, inArray, lte, or, sql,
+  and, asc, desc, eq, exists, getTableColumns, gte, ilike, inArray, lte, or, sql,
 } from "drizzle-orm";
 import { batchesNeeded } from "./aggregate-groceries";
 import { db } from "@/db";
@@ -30,15 +30,24 @@ export type FullRecipe = Recipe & {
 export type RecipeWithCover = Recipe & { coverPhotoUrl: string | null };
 
 /**
- * Your own photo wins over whatever picture the source site published, and
- * the one you marked as cover wins over the rest.
+ * One photo per recipe — the cover if you picked one, otherwise the first.
+ *
+ * Built as a joinable subquery rather than a correlated one written by hand:
+ * inside a raw `sql` template drizzle emits column references unqualified, so
+ * `photos.recipe_id = recipes.id` came out as `p.recipe_id = "id"`, which
+ * Postgres happily resolved against the *inner* table. Every recipe got the
+ * same photo and nothing errored. Column helpers qualify properly.
  */
-const coverPhotoUrl = sql<string | null>`(
-  SELECT p.url FROM ${photos} p
-  WHERE p.recipe_id = ${recipes.id}
-  ORDER BY p.is_cover DESC, p.position ASC
-  LIMIT 1
-)`;
+function coverPhotoQuery() {
+  return db
+    .selectDistinctOn([photos.recipeId], {
+      recipeId: photos.recipeId,
+      url: photos.url,
+    })
+    .from(photos)
+    .orderBy(photos.recipeId, desc(photos.isCover), asc(photos.position))
+    .as("cover_photo");
+}
 
 export async function listRecipes(options?: {
   search?: string;
@@ -54,7 +63,17 @@ export async function listRecipes(options?: {
         ilike(recipes.title, term),
         ilike(recipes.description, term),
         // Matching ingredients is what makes "what can I do with leeks?" work.
-        sql`EXISTS (SELECT 1 FROM ${ingredients} i WHERE i.recipe_id = ${recipes.id} AND i.raw ILIKE ${term})`,
+        exists(
+          db
+            .select({ one: sql`1` })
+            .from(ingredients)
+            .where(
+              and(
+                eq(ingredients.recipeId, recipes.id),
+                ilike(ingredients.raw, term),
+              ),
+            ),
+        ),
       ),
     );
   }
@@ -65,12 +84,12 @@ export async function listRecipes(options?: {
     filters.push(eq(recipes.isFavorite, true));
   }
 
+  const cover = coverPhotoQuery();
+
   return db
-    .select({
-      ...getTableColumns(recipes),
-      coverPhotoUrl: coverPhotoUrl.as("cover_photo_url"),
-    })
+    .select({ ...getTableColumns(recipes), coverPhotoUrl: cover.url })
     .from(recipes)
+    .leftJoin(cover, eq(cover.recipeId, recipes.id))
     .where(filters.length ? and(...filters) : undefined)
     .orderBy(desc(recipes.isFavorite), desc(recipes.createdAt));
 }
