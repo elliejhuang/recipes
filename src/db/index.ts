@@ -16,6 +16,20 @@ function connect(): Database {
     );
   }
 
+  // Supabase's direct host publishes an AAAA record and no A record, so it is
+  // reachable only over IPv6. On a network whose IPv6 route comes and goes,
+  // that surfaces as `getaddrinfo ENOTFOUND` wrapped in a "Failed query"
+  // message that points at whichever query happened to run first — which reads
+  // like a SQL bug and isn't one. Fail with something legible instead.
+  if (/^db\.[^.]+\.supabase\.co$/.test(new URL(url).hostname)) {
+    throw new Error(
+      "DATABASE_URL points at Supabase's direct host, which is IPv6-only and " +
+        "unreachable from most networks and from Vercel. Use the transaction " +
+        "pooler instead: Dashboard → Connect → Transaction pooler " +
+        "(aws-0-<region>.pooler.supabase.com:6543).",
+    );
+  }
+
   const client = postgres(url, {
     // Supabase's transaction pooler hands out a different backend per
     // statement, so prepared statements can't be cached across them.

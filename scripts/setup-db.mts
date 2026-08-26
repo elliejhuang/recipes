@@ -14,7 +14,9 @@ import { migrate } from "drizzle-orm/postgres-js/migrator";
 import postgres from "postgres";
 import { PHOTO_BUCKET, createAdminClient } from "../src/lib/supabase.ts";
 
-const url = process.env.DATABASE_URL;
+// Migrations need a session, not the transaction pooler: DDL inside a
+// transaction has to keep every statement on the same backend.
+const url = process.env.DIRECT_DATABASE_URL ?? process.env.DATABASE_URL;
 
 if (!url) {
   console.error(
