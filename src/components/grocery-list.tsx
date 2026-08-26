@@ -107,7 +107,7 @@ export function GroceryList({
                   : "";
 
                 return (
-                  <li key={item.id} className="group flex items-start gap-2.5 py-1.5">
+                  <li key={item.id} className="group flex items-start gap-3 py-2 sm:py-1.5">
                     <input
                       type="checkbox"
                       checked={item.checked}
@@ -116,7 +116,7 @@ export function GroceryList({
                           () => void toggleGroceryItem(item.id, e.target.checked),
                         )
                       }
-                      className="mt-1 h-4 w-4 shrink-0 accent-[var(--color-accent)]"
+                      className="mt-0.5 h-5 w-5 shrink-0 accent-[var(--color-accent)]"
                     />
 
                     <div
@@ -143,7 +143,7 @@ export function GroceryList({
                         startTransition(() => void deleteGroceryItem(item.id))
                       }
                       aria-label={`Remove ${item.name}`}
-                      className="no-print mt-0.5 text-faint opacity-0 group-hover:opacity-100 hover:text-accent focus-visible:opacity-100"
+                      className="no-print -m-2 p-2 text-faint hover:text-accent sm:opacity-0 sm:group-hover:opacity-100 sm:focus-visible:opacity-100"
                     >
                       <X size={14} />
                     </button>

@@ -33,6 +33,14 @@ export function PlanBoard({
   const days = weekDays(weekStart);
   const today = todayKey();
 
+  // A phone shows one day at a time. Seven stacked cards of mostly-empty meal
+  // slots is a very long scroll to reach Sunday, and the week is legible as a
+  // grid only when it fits on one screen anyway.
+  const [openDay, setOpenDay] = useState(
+    () => (days.includes(today) ? today : days[0]),
+  );
+  const selectedDay = days.includes(openDay) ? openDay : days[0];
+
   const byslot = useMemo(() => {
     const map = new Map<string, PlanEntry[]>();
     for (const entry of entries) {
@@ -70,8 +78,39 @@ export function PlanBoard({
     startTransition(() => void movePlanEntry(dragging, date, meal));
   };
 
+  const dayCount = (date: string) =>
+    entries.filter((entry) => entry.date === date).length;
+
   return (
     <>
+      <div className="-mx-4 mb-3 flex gap-1.5 overflow-x-auto px-4 pb-1 [scrollbar-width:none] xl:hidden [&::-webkit-scrollbar]:hidden">
+        {days.map((date) => {
+          const { weekday, date: label } = formatDayLabel(date);
+          const count = dayCount(date);
+          return (
+            <button
+              key={date}
+              onClick={() => setOpenDay(date)}
+              className={clsx(
+                "flex shrink-0 flex-col items-center rounded-lg border px-3 py-1.5 text-xs",
+                date === selectedDay
+                  ? "border-accent bg-accent-soft text-accent"
+                  : "border-rule bg-card text-muted",
+              )}
+            >
+              <span className="font-semibold">{weekday}</span>
+              <span className="text-[10px] opacity-70">{label}</span>
+              {count > 0 && (
+                <span
+                  className="mt-1 h-1 w-1 rounded-full bg-current"
+                  aria-label={`${count} planned`}
+                />
+              )}
+            </button>
+          );
+        })}
+      </div>
+
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-7">
         {days.map((date) => {
           const { weekday, date: label } = formatDayLabel(date);
@@ -82,8 +121,9 @@ export function PlanBoard({
             <section
               key={date}
               className={clsx(
-                "flex flex-col rounded-xl border bg-card p-2.5",
+                "flex-col rounded-xl border bg-card p-2.5",
                 isToday ? "border-accent" : "border-rule",
+                date === selectedDay ? "flex" : "hidden xl:flex",
               )}
             >
               <header className="flex items-baseline justify-between px-0.5 pb-2">
@@ -120,7 +160,7 @@ export function PlanBoard({
                         <button
                           onClick={() => setPicking({ date, meal })}
                           aria-label={`Add to ${meal} on ${weekday}`}
-                          className="text-faint hover:text-accent"
+                          className="-m-2 p-2 text-faint hover:text-accent"
                         >
                           <Plus size={13} />
                         </button>
@@ -276,19 +316,19 @@ function PlanTile({
         </span>
       </div>
 
-      <div className="absolute top-1 right-1 flex gap-0.5">
+      <div className="absolute top-1 right-1 flex gap-1.5">
         <button
           onClick={() => setMoving((m) => !m)}
           aria-label="Move to another day or meal"
           aria-expanded={moving}
-          className="text-faint hover:text-accent"
+          className="-m-1.5 p-1.5 text-faint hover:text-accent"
         >
           <ArrowRightLeft size={11} />
         </button>
         <button
           onClick={() => startTransition(() => void removeFromPlan(entry.id))}
           aria-label="Remove from plan"
-          className="text-faint hover:text-accent"
+          className="-m-1.5 p-1.5 text-faint hover:text-accent"
         >
           <X size={12} />
         </button>

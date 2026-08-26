@@ -53,14 +53,16 @@ export default async function HomePage({
         </Link>
       </div>
 
+      {/* Tags scroll sideways on a phone: eighteen of them wrapped is five
+          rows of chrome before you see a single recipe. */}
       {tags.length > 0 && (
-        <div className="mt-3 flex flex-wrap gap-1.5">
+        <div className="-mx-4 mt-3 flex gap-1.5 overflow-x-auto px-4 pb-1 [scrollbar-width:none] sm:mx-0 sm:flex-wrap sm:overflow-visible sm:px-0 [&::-webkit-scrollbar]:hidden">
           {tags.slice(0, 18).map(({ tag: name, count }) => (
             <Link
               key={name}
               href={chipHref({ tag: tag === name ? undefined : name })}
               className={clsx(
-                "rounded-full border px-2.5 py-1 text-xs",
+                "shrink-0 rounded-full border px-2.5 py-1 text-xs",
                 tag === name
                   ? "border-accent bg-accent-soft text-accent"
                   : "border-rule bg-card text-muted hover:border-faint",
@@ -80,7 +82,7 @@ export default async function HomePage({
           <p className="mt-6 text-xs text-faint">
             {recipes.length} {recipes.length === 1 ? "recipe" : "recipes"}
           </p>
-          <div className="mt-3 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+          <div className="mt-3 grid gap-2.5 sm:grid-cols-2 sm:gap-4 lg:grid-cols-3">
             {recipes.map((recipe) => (
               <RecipeCard key={recipe.id} recipe={recipe} />
             ))}
