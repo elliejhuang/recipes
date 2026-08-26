@@ -5,13 +5,7 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { Link2, Search, X } from "lucide-react";
 
-export function SearchBar({
-  initial,
-  folderId,
-}: {
-  initial: string;
-  folderId: number | null;
-}) {
+export function SearchBar({ initial }: { initial: string }) {
   const router = useRouter();
   const [value, setValue] = useState(initial);
 
@@ -22,12 +16,11 @@ export function SearchBar({
     const timer = setTimeout(() => {
       const params = new URLSearchParams();
       if (value.trim()) params.set("q", value.trim());
-      if (folderId) params.set("folder", String(folderId));
       router.replace(params.toString() ? `/?${params}` : "/", { scroll: false });
     }, 250);
 
     return () => clearTimeout(timer);
-  }, [value, initial, folderId, router]);
+  }, [value, initial, router]);
 
   return (
     <div className="flex gap-2">

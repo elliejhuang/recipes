@@ -15,15 +15,15 @@ export const viewport: Viewport = {
   // the content back where it belongs.
   viewportFit: "cover",
   themeColor: [
-    { media: "(prefers-color-scheme: light)", color: "#fbf8f4" },
-    { media: "(prefers-color-scheme: dark)", color: "#22201e" },
+    { media: "(prefers-color-scheme: light)", color: "#fcfcfd" },
+    { media: "(prefers-color-scheme: dark)", color: "#1c1c1f" },
   ],
 };
 
 const NAV = [
   { href: "/", label: "Recipes" },
-  { href: "/plan", label: "To Make" },
-  { href: "/list", label: "Groceries" },
+  { href: "/lists", label: "Lists" },
+  { href: "/groceries", label: "Groceries" },
 ];
 
 export default function RootLayout({

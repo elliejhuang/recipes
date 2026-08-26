@@ -13,8 +13,18 @@ export async function POST(request: Request) {
 
   const recipe = (await request.json()) as ImportedRecipe;
   const id = await saveRecipe({
-    ...recipe,
+    title: recipe.title,
+    imageUrl: recipe.imageUrl,
+    sourceUrl: recipe.sourceUrl,
+    sourceName: recipe.sourceName,
+    servings: recipe.servings,
+    prepMinutes: recipe.prepMinutes,
+    cookMinutes: recipe.cookMinutes,
+    tags: recipe.tags,
+    ingredientLines: recipe.ingredientLines,
+    method: recipe.stepLines.join("\n"),
     notes: null,
+    nutrition: recipe.nutrition,
     nutritionSource: recipe.nutrition ? "imported" : null,
   });
   return NextResponse.json({ id });

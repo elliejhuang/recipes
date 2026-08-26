@@ -1,9 +1,10 @@
 @import "tailwindcss";
 
 /*
-  A warm, paper-like palette. Recipe apps live next to a stove and get read at
-  arm's length, so the type is a size up from a typical web app and the
-  contrast stays high.
+  A pale, near-neutral palette. The earlier one was noticeably cream — warm
+  enough to read as aged paper — and this keeps only a trace of that warmth so
+  photographed food supplies the colour instead. Type stays a size up from a
+  typical web app: this gets read at arm's length next to a stove.
 */
 @theme {
   --font-serif: "Iowan Old Style", "Palatino Linotype", Palatino, Georgia,
@@ -11,16 +12,16 @@
   --font-sans: ui-sans-serif, -apple-system, "SF Pro Text", "Helvetica Neue",
     Arial, sans-serif;
 
-  --color-paper: oklch(98.6% 0.008 85);
+  --color-paper: oklch(99.1% 0.002 250);
   --color-card: oklch(100% 0 0);
-  --color-ink: oklch(24% 0.015 60);
-  --color-muted: oklch(52% 0.015 60);
-  --color-faint: oklch(72% 0.012 60);
-  --color-rule: oklch(91% 0.008 70);
-  --color-accent: oklch(52% 0.15 35);
-  --color-accent-soft: oklch(95.5% 0.025 45);
-  --color-leaf: oklch(52% 0.09 145);
-  --color-leaf-soft: oklch(95.5% 0.03 145);
+  --color-ink: oklch(21% 0.006 260);
+  --color-muted: oklch(52% 0.008 260);
+  --color-faint: oklch(70% 0.006 260);
+  --color-rule: oklch(93.5% 0.003 260);
+  --color-accent: oklch(50% 0.16 28);
+  --color-accent-soft: oklch(96.5% 0.018 30);
+  --color-leaf: oklch(50% 0.1 150);
+  --color-leaf-soft: oklch(96.5% 0.025 150);
 }
 
 @layer base {
@@ -31,16 +32,16 @@
   @media (prefers-color-scheme: dark) {
     :root {
       color-scheme: dark;
-      --color-paper: oklch(18% 0.012 70);
-      --color-card: oklch(22.5% 0.013 70);
-      --color-ink: oklch(94% 0.008 80);
-      --color-muted: oklch(70% 0.012 75);
-      --color-faint: oklch(52% 0.012 75);
-      --color-rule: oklch(31% 0.012 70);
-      --color-accent: oklch(74% 0.13 40);
-      --color-accent-soft: oklch(30% 0.045 40);
-      --color-leaf: oklch(75% 0.11 145);
-      --color-leaf-soft: oklch(28% 0.04 145);
+      --color-paper: oklch(17% 0.004 260);
+      --color-card: oklch(21.5% 0.005 260);
+      --color-ink: oklch(95% 0.003 260);
+      --color-muted: oklch(70% 0.006 260);
+      --color-faint: oklch(50% 0.006 260);
+      --color-rule: oklch(29% 0.005 260);
+      --color-accent: oklch(72% 0.14 32);
+      --color-accent-soft: oklch(28% 0.05 32);
+      --color-leaf: oklch(74% 0.12 150);
+      --color-leaf-soft: oklch(27% 0.045 150);
     }
   }
 

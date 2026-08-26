@@ -1,18 +1,18 @@
 import Link from "next/link";
-import { Star } from "lucide-react";
 import type { RecipeWithCover } from "@/lib/queries";
 
-/** Photo and name. Everything else belongs on the recipe itself. */
+/**
+ * Photo above, name below. Always this shape — the horizontal row that used to
+ * appear on phones made the collection read as a list of text rather than a
+ * wall of food.
+ */
 export function RecipeCard({ recipe }: { recipe: RecipeWithCover }) {
   // A photo you took beats the one the source published.
   const imageUrl = recipe.coverPhotoUrl ?? recipe.imageUrl;
 
   return (
-    <Link
-      href={`/recipes/${recipe.id}`}
-      className="group flex gap-3 overflow-hidden rounded-xl border border-rule bg-card p-2.5 transition-colors hover:border-faint sm:flex-col sm:gap-0 sm:p-0"
-    >
-      <div className="relative aspect-square w-20 shrink-0 overflow-hidden rounded-lg bg-paper sm:aspect-[4/3] sm:w-auto sm:rounded-none">
+    <Link href={`/recipes/${recipe.id}`} className="group">
+      <div className="aspect-square overflow-hidden rounded-xl border border-rule bg-card transition-colors group-hover:border-faint">
         {imageUrl ? (
           // Recipe images come from arbitrary hosts, so next/image's remote
           // allowlist would need editing for every new site.
@@ -25,23 +25,26 @@ export function RecipeCard({ recipe }: { recipe: RecipeWithCover }) {
           />
         ) : (
           <div className="flex h-full items-center justify-center">
-            <span className="font-serif text-2xl text-faint sm:text-4xl">
+            <span className="font-serif text-3xl text-faint">
               {recipe.title.slice(0, 1).toUpperCase()}
             </span>
           </div>
         )}
-        {recipe.isFavorite && (
-          <div className="absolute top-1 right-1 rounded-full bg-card/90 p-1 backdrop-blur sm:top-2 sm:right-2 sm:p-1.5">
-            <Star size={12} className="fill-accent text-accent" />
-          </div>
-        )}
       </div>
-
-      <div className="flex min-w-0 flex-1 items-center sm:p-3.5">
-        <h2 className="font-serif text-lg leading-snug font-semibold text-balance">
-          {recipe.title}
-        </h2>
-      </div>
+      <h2 className="mt-1.5 px-0.5 font-serif text-[15px] leading-snug font-semibold">
+        {recipe.title}
+      </h2>
     </Link>
+  );
+}
+
+/** The wall itself, so every screen lays recipes out the same way. */
+export function RecipeGrid({ recipes }: { recipes: RecipeWithCover[] }) {
+  return (
+    <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
+      {recipes.map((recipe) => (
+        <RecipeCard key={recipe.id} recipe={recipe} />
+      ))}
+    </div>
   );
 }

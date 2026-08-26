@@ -97,46 +97,35 @@ export const photos = pgTable(
 );
 
 /**
- * Recipes you want to make. No dates and no meal slots — a shelf you add to
- * and cook from, which is how the planning actually happened in practice.
+ * A named collection of recipes.
+ *
+ * Filing them and choosing what to cook turned out to be the same act, so
+ * there's one concept rather than folders and a separate shelf. Exactly one
+ * list is `isDefault` — "To Make" — and it's the one the grocery list is built
+ * from. Separate from `recipes.tags`, which is whatever the source site
+ * published and is nobody's idea of a filing system.
  */
-export const planItems = pgTable(
-  "plan_items",
-  {
-    id: serial("id").primaryKey(),
-    recipeId: integer("recipe_id")
-      .notNull()
-      .references(() => recipes.id, { onDelete: "cascade" }),
-    position: integer("position").notNull().default(0),
-    createdAt: timestamp("created_at").defaultNow().notNull(),
-  },
-  (t) => [index("plan_items_recipe_idx").on(t.recipeId)],
-);
-
-/**
- * Your own grouping of recipes. Separate from `recipes.tags`, which is
- * whatever the source site published and is nobody's idea of a filing system.
- */
-export const folders = pgTable("folders", {
+export const lists = pgTable("lists", {
   id: serial("id").primaryKey(),
   name: text("name").notNull(),
+  isDefault: boolean("is_default").default(false).notNull(),
   position: integer("position").notNull().default(0),
   createdAt: timestamp("created_at").defaultNow().notNull(),
 });
 
-export const recipeFolders = pgTable(
-  "recipe_folders",
+export const listMembers = pgTable(
+  "list_recipes",
   {
     recipeId: integer("recipe_id")
       .notNull()
       .references(() => recipes.id, { onDelete: "cascade" }),
-    folderId: integer("folder_id")
+    listId: integer("list_id")
       .notNull()
-      .references(() => folders.id, { onDelete: "cascade" }),
+      .references(() => lists.id, { onDelete: "cascade" }),
   },
   (t) => [
-    primaryKey({ columns: [t.recipeId, t.folderId] }),
-    index("recipe_folders_folder_idx").on(t.folderId),
+    primaryKey({ columns: [t.recipeId, t.listId] }),
+    index("list_recipes_list_idx").on(t.listId),
   ],
 );
 
@@ -177,8 +166,7 @@ export const groceryItems = pgTable(
 export const recipesRelations = relations(recipes, ({ many }) => ({
   ingredients: many(ingredients),
   photos: many(photos),
-  planItems: many(planItems),
-  recipeFolders: many(recipeFolders),
+  members: many(listMembers),
 }));
 
 export const ingredientsRelations = relations(ingredients, ({ one }) => ({
@@ -192,23 +180,16 @@ export const photosRelations = relations(photos, ({ one }) => ({
   recipe: one(recipes, { fields: [photos.recipeId], references: [recipes.id] }),
 }));
 
-export const planItemsRelations = relations(planItems, ({ one }) => ({
-  recipe: one(recipes, { fields: [planItems.recipeId], references: [recipes.id] }),
+export const listsRelations = relations(lists, ({ many }) => ({
+  members: many(listMembers),
 }));
 
-export const foldersRelations = relations(folders, ({ many }) => ({
-  recipeFolders: many(recipeFolders),
-}));
-
-export const recipeFoldersRelations = relations(recipeFolders, ({ one }) => ({
+export const listMembersRelations = relations(listMembers, ({ one }) => ({
   recipe: one(recipes, {
-    fields: [recipeFolders.recipeId],
+    fields: [listMembers.recipeId],
     references: [recipes.id],
   }),
-  folder: one(folders, {
-    fields: [recipeFolders.folderId],
-    references: [folders.id],
-  }),
+  list: one(lists, { fields: [listMembers.listId], references: [lists.id] }),
 }));
 
 export const groceryListsRelations = relations(groceryLists, ({ many }) => ({
@@ -225,7 +206,6 @@ export const groceryItemsRelations = relations(groceryItems, ({ one }) => ({
 export type Recipe = typeof recipes.$inferSelect;
 export type Ingredient = typeof ingredients.$inferSelect;
 export type Photo = typeof photos.$inferSelect;
-export type PlanItem = typeof planItems.$inferSelect;
-export type Folder = typeof folders.$inferSelect;
+export type RecipeList = typeof lists.$inferSelect;
 export type GroceryList = typeof groceryLists.$inferSelect;
 export type GroceryItem = typeof groceryItems.$inferSelect;

@@ -5,19 +5,18 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { db } from "@/db";
 import {
-  folders,
   groceryItems,
   groceryLists,
   ingredients,
+  listMembers,
+  lists,
   photos,
-  planItems,
-  recipeFolders,
   recipes,
 } from "@/db/schema";
 import { aggregateGroceries } from "./aggregate-groceries";
 import { estimateMacros } from "./nutrition";
 import { parseIngredientLine } from "./parse-ingredient";
-import { ensureAutoList, getPlanIngredients } from "./queries";
+import { ensureAutoList, ensureDefaultList, getPlanIngredients } from "./queries";
 
 export type RecipeInput = {
   id?: number;
@@ -227,96 +226,97 @@ export async function forkRecipe(id: number): Promise<number> {
   return copy.id;
 }
 
-/* -------------------------------------------------------------- folders --- */
+/* ---------------------------------------------------------------- lists --- */
 
-export async function createFolder(name: string): Promise<number> {
+export async function createList(name: string): Promise<number> {
   const trimmed = name.trim();
-  if (!trimmed) throw new Error("Give the folder a name.");
+  if (!trimmed) throw new Error("Give the list a name.");
 
   const [{ next }] = await db
-    .select({ next: sql<number>`(COALESCE(MAX(${folders.position}), -1) + 1)::int` })
-    .from(folders);
+    .select({ next: sql<number>`(COALESCE(MAX(${lists.position}), -1) + 1)::int` })
+    .from(lists);
 
   const [row] = await db
-    .insert(folders)
+    .insert(lists)
     .values({ name: trimmed, position: next })
-    .returning({ id: folders.id });
+    .returning({ id: lists.id });
 
-  revalidatePath("/");
+  revalidatePath("/lists");
   return row.id;
 }
 
-export async function renameFolder(id: number, name: string) {
+export async function renameList(id: number, name: string) {
   const trimmed = name.trim();
   if (!trimmed) return;
-  await db.update(folders).set({ name: trimmed }).where(eq(folders.id, id));
+  await db.update(lists).set({ name: trimmed }).where(eq(lists.id, id));
+  revalidatePath("/lists");
+}
+
+export async function deleteList(id: number) {
+  const [list] = await db.select().from(lists).where(eq(lists.id, id));
+  // "To Make" is the one the groceries are built from; deleting it would only
+  // recreate itself, emptier.
+  if (!list || list.isDefault) return;
+
+  await db.delete(lists).where(eq(lists.id, id));
+  revalidatePath("/lists");
   revalidatePath("/");
 }
 
-export async function deleteFolder(id: number) {
-  // Only the grouping goes; the recipes filed under it are untouched.
-  await db.delete(folders).where(eq(folders.id, id));
-  revalidatePath("/");
-}
-
-export async function setRecipeFolders(recipeId: number, folderIds: number[]) {
-  await db.delete(recipeFolders).where(eq(recipeFolders.recipeId, recipeId));
-  if (folderIds.length) {
+/** Sets exactly which lists a recipe belongs to. */
+export async function setRecipeLists(recipeId: number, listIds: number[]) {
+  await db.delete(listMembers).where(eq(listMembers.recipeId, recipeId));
+  if (listIds.length) {
     await db
-      .insert(recipeFolders)
-      .values(folderIds.map((folderId) => ({ recipeId, folderId })));
+      .insert(listMembers)
+      .values(listIds.map((listId) => ({ recipeId, listId })));
   }
-  revalidatePath("/");
+
+  await rebuildAutoList();
+  revalidatePath("/lists");
+  revalidatePath("/groceries");
   revalidatePath(`/recipes/${recipeId}`);
 }
 
-/* ----------------------------------------------------------------- plan --- */
+/** One tap from a recipe: on or off the default "To Make" list. */
+export async function toggleDefaultList(recipeId: number, on: boolean) {
+  const defaultList = await ensureDefaultList();
 
-export async function addToPlan(recipeId: number) {
-  const [existing] = await db
-    .select({ id: planItems.id })
-    .from(planItems)
-    .where(eq(planItems.recipeId, recipeId))
-    .limit(1);
-  if (existing) return;
+  if (on) {
+    await db
+      .insert(listMembers)
+      .values({ recipeId, listId: defaultList.id })
+      .onConflictDoNothing();
+  } else {
+    await db
+      .delete(listMembers)
+      .where(
+        and(eq(listMembers.recipeId, recipeId), eq(listMembers.listId, defaultList.id)),
+      );
+  }
 
-  const [{ next }] = await db
-    .select({ next: sql<number>`(COALESCE(MAX(${planItems.position}), -1) + 1)::int` })
-    .from(planItems);
-
-  await db.insert(planItems).values({ recipeId, position: next });
   await rebuildAutoList();
-
-  revalidatePath("/plan");
-  revalidatePath("/list");
+  revalidatePath("/lists");
+  revalidatePath("/groceries");
   revalidatePath(`/recipes/${recipeId}`);
 }
 
-export async function removeFromPlan(recipeId: number) {
-  await db.delete(planItems).where(eq(planItems.recipeId, recipeId));
+export async function clearList(listId: number) {
+  await db.delete(listMembers).where(eq(listMembers.listId, listId));
   await rebuildAutoList();
-
-  revalidatePath("/plan");
-  revalidatePath("/list");
-  revalidatePath(`/recipes/${recipeId}`);
-}
-
-export async function clearPlan() {
-  await db.delete(planItems);
-  await rebuildAutoList();
-  revalidatePath("/plan");
-  revalidatePath("/list");
+  revalidatePath("/lists");
+  revalidatePath("/groceries");
 }
 
 /* ------------------------------------------------------------ groceries --- */
 
 /**
- * Rebuilds the auto list from the plan.
+ * Rebuilds the auto grocery list from the default "To Make" recipe list.
  *
- * Runs on every change to the plan rather than behind a button, so the list is
- * simply correct whenever you look at it. Hand-added items survive, and so do
- * checkmarks on items still needed — changing the plan shouldn't cost you the
- * aisles you already walked.
+ * Runs on every change to that list rather than behind a button, so the
+ * groceries are simply correct whenever you look at them. Hand-added items
+ * survive, and so do checkmarks on items still needed — changing your mind
+ * about dinner shouldn't cost you the aisles you already walked.
  */
 export async function rebuildAutoList() {
   const list = await ensureAutoList();
@@ -348,7 +348,7 @@ export async function rebuildAutoList() {
 
   if (generated.length) await db.insert(groceryItems).values(generated);
 
-  revalidatePath("/list");
+  revalidatePath("/groceries");
 }
 
 export async function createGroceryList(name: string): Promise<number> {
@@ -363,7 +363,7 @@ export async function createGroceryList(name: string): Promise<number> {
     .values({ name: trimmed, isAuto: false, position: next })
     .returning({ id: groceryLists.id });
 
-  revalidatePath("/list");
+  revalidatePath("/groceries");
   return row.id;
 }
 
@@ -371,7 +371,7 @@ export async function renameGroceryList(id: number, name: string) {
   const trimmed = name.trim();
   if (!trimmed) return;
   await db.update(groceryLists).set({ name: trimmed }).where(eq(groceryLists.id, id));
-  revalidatePath("/list");
+  revalidatePath("/groceries");
 }
 
 export async function deleteGroceryList(id: number) {
@@ -381,7 +381,7 @@ export async function deleteGroceryList(id: number) {
   if (!list || list.isAuto) return;
 
   await db.delete(groceryLists).where(eq(groceryLists.id, id));
-  revalidatePath("/list");
+  revalidatePath("/groceries");
 }
 
 export async function addGroceryItem(listId: number, text: string) {
@@ -405,31 +405,31 @@ export async function addGroceryItem(listId: number, text: string) {
     isManual: true,
   });
 
-  revalidatePath("/list");
+  revalidatePath("/groceries");
 }
 
 export async function toggleGroceryItem(id: number, checked: boolean) {
   await db.update(groceryItems).set({ checked }).where(eq(groceryItems.id, id));
-  revalidatePath("/list");
+  revalidatePath("/groceries");
 }
 
 export async function renameGroceryItem(id: number, name: string) {
   const trimmed = name.trim();
   if (!trimmed) return;
   await db.update(groceryItems).set({ name: trimmed }).where(eq(groceryItems.id, id));
-  revalidatePath("/list");
+  revalidatePath("/groceries");
 }
 
 export async function deleteGroceryItem(id: number) {
   await db.delete(groceryItems).where(eq(groceryItems.id, id));
-  revalidatePath("/list");
+  revalidatePath("/groceries");
 }
 
 export async function clearCheckedItems(listId: number) {
   await db
     .delete(groceryItems)
     .where(and(eq(groceryItems.listId, listId), eq(groceryItems.checked, true)));
-  revalidatePath("/list");
+  revalidatePath("/groceries");
 }
 
 /* -------------------------------------------------------------- photos --- */

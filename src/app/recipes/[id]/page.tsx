@@ -3,10 +3,9 @@ import { notFound } from "next/navigation";
 import { ExternalLink, Pencil } from "lucide-react";
 import { ForkButton } from "@/components/fork-button";
 import { PhotoGallery } from "@/components/photo-gallery";
-import { PlanButton } from "@/components/plan-button";
+import { AddToListButton, ToMakeButton } from "@/components/list-picker";
 import { RecipeDetail } from "@/components/recipe-detail";
-import { RecipeFolders } from "@/components/recipe-folders";
-import { getRecipe, listFolders } from "@/lib/queries";
+import { getRecipe, listLists } from "@/lib/queries";
 import { photosEnabled } from "@/lib/supabase";
 
 export const dynamic = "force-dynamic";
@@ -17,9 +16,9 @@ export default async function RecipePage({
   params: Promise<{ id: string }>;
 }) {
   const { id } = await params;
-  const [recipe, folders] = await Promise.all([
+  const [recipe, lists] = await Promise.all([
     getRecipe(Number(id)),
-    listFolders(),
+    listLists(),
   ]);
   if (!recipe) notFound();
 
@@ -48,13 +47,6 @@ export default async function RecipePage({
               </a>
             )}
 
-            <div className="no-print mt-3">
-              <RecipeFolders
-                recipeId={recipe.id}
-                folders={folders}
-                initial={recipe.folderIds}
-              />
-            </div>
           </div>
 
           {heroUrl && (
@@ -68,7 +60,16 @@ export default async function RecipePage({
         </div>
 
         <div className="no-print mt-5 flex flex-wrap items-center gap-2">
-          <PlanButton recipeId={recipe.id} isPlanned={recipe.isPlanned} />
+          <ToMakeButton
+            recipeId={recipe.id}
+            lists={lists}
+            listIds={recipe.listIds}
+          />
+          <AddToListButton
+            recipeId={recipe.id}
+            lists={lists}
+            listIds={recipe.listIds}
+          />
           <Link href={`/recipes/${recipe.id}/edit`} className="btn">
             <Pencil size={14} />
             Edit

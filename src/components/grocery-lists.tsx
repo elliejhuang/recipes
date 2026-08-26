@@ -13,10 +13,10 @@ import {
   renameGroceryList,
   toggleGroceryItem,
 } from "@/lib/actions";
-import type { ListWithItems } from "@/lib/queries";
+import type { GroceryListWithItems } from "@/lib/queries";
 import { formatMeasure } from "@/lib/units";
 
-export function GroceryLists({ lists }: { lists: ListWithItems[] }) {
+export function GroceryLists({ lists }: { lists: GroceryListWithItems[] }) {
   const [openId, setOpenId] = useState<number | null>(null);
   const [, startTransition] = useTransition();
 
@@ -94,7 +94,7 @@ export function GroceryLists({ lists }: { lists: ListWithItems[] }) {
   );
 }
 
-function SingleList({ list }: { list: ListWithItems }) {
+function SingleList({ list }: { list: GroceryListWithItems }) {
   const [draft, setDraft] = useState("");
   const [name, setName] = useState(list.name);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -197,7 +197,7 @@ function SingleList({ list }: { list: ListWithItems }) {
   );
 }
 
-function Row({ item }: { item: ListWithItems["items"][number] }) {
+function Row({ item }: { item: GroceryListWithItems["items"][number] }) {
   const [name, setName] = useState(item.name);
   const [, startTransition] = useTransition();
 
