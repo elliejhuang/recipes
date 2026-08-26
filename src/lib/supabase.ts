@@ -3,17 +3,27 @@ import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 export const PHOTO_BUCKET = "recipe-photos";
 
 /**
- * Server-side client. The service role key bypasses row-level security, so
- * this must only ever be constructed on the server — never imported into a
- * Client Component.
+ * Supabase is midway through renaming its API keys: new projects issue
+ * `sb_publishable_…` / `sb_secret_…`, older ones issue anon / service_role
+ * JWTs. Both work identically here, so accept either name rather than making
+ * the setup instructions depend on which era a project was created in.
+ */
+function secretKey(): string | undefined {
+  return process.env.SUPABASE_SECRET_KEY ?? process.env.SUPABASE_SERVICE_ROLE_KEY;
+}
+
+/**
+ * Server-side client. The secret key bypasses row-level security, so this must
+ * only ever be constructed on the server — never imported into a Client
+ * Component.
  */
 export function createAdminClient(): SupabaseClient {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  const key = secretKey();
 
   if (!url || !key) {
     throw new Error(
-      "Photo uploads need NEXT_PUBLIC_SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY in .env.local.",
+      "Photo uploads need NEXT_PUBLIC_SUPABASE_URL and SUPABASE_SECRET_KEY in .env.local.",
     );
   }
 
@@ -24,7 +34,5 @@ export function createAdminClient(): SupabaseClient {
 
 /** Whether photo uploads are configured, so the UI can say so plainly. */
 export function photosEnabled(): boolean {
-  return Boolean(
-    process.env.NEXT_PUBLIC_SUPABASE_URL && process.env.SUPABASE_SERVICE_ROLE_KEY,
-  );
+  return Boolean(process.env.NEXT_PUBLIC_SUPABASE_URL && secretKey());
 }
