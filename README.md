@@ -3,15 +3,19 @@
 Your recipes, your week, your list. A personal recipe app that imports from any
 recipe site, plans a week of meals, builds the shopping list, and tracks macros.
 
-## Getting a database
+## Setup
 
-The app needs a Postgres connection string. Neon's free tier is enough and
-doesn't ask for a card.
+Everything runs on one free Supabase project — Postgres for the data, Storage
+for your photos.
 
-1. Sign up at [neon.tech](https://neon.tech) and create a project
-2. Copy the **pooled** connection string from the dashboard
-3. `cp .env.example .env.local` and paste it in as `DATABASE_URL`
-4. `npm run db:setup` — creates the tables
+1. Create a project at [supabase.com](https://supabase.com) (free tier, no card)
+2. `cp .env.example .env.local`
+3. Fill in four values from the Supabase dashboard:
+   - `DATABASE_URL` — Settings → Database → Connection string → **Transaction
+     pooler**, with `[YOUR-PASSWORD]` swapped for your database password
+   - `NEXT_PUBLIC_SUPABASE_URL` and `NEXT_PUBLIC_SUPABASE_ANON_KEY` — Settings → API
+   - `SUPABASE_SERVICE_ROLE_KEY` — Settings → API. Server-only; never commit it
+4. `npm run db:setup` — creates the tables and the photo bucket
 5. `npm run dev` — http://localhost:3000
 
 ## What it does
@@ -37,6 +41,17 @@ recipe and 2 tablespoons in another come out as one line reading "½ cup".
 Grouped by aisle. Anything you add by hand survives a rebuild, and so do the
 boxes you've already ticked.
 
+**Your photos.** Drop them onto any recipe, several at a time. Caption them,
+pick which one is the cover, or pin one to a step so you can see what it should
+look like when the onions are done. They live in Supabase Storage and outlast
+the original site's images, which rot.
+
+**Make it mine.** A recipe off the internet is a record of what someone else
+cooked. "Make it mine" copies it into your own version — adjust the amounts,
+rewrite the steps, add your photos — and leaves the imported original untouched
+as a reference. Both stay linked, so you can always see what the site actually
+said, and each version keeps a note of what you changed and why.
+
 **Macros.** Per serving, from three sources in order of trust: what the
 original site published, what you typed in, or an estimate added up from the
 ingredients. Estimates always say so and report how many ingredients they could
@@ -45,10 +60,11 @@ estimate.
 
 ## How it's built
 
-Next.js App Router, Postgres via Drizzle on Neon's HTTP driver, Tailwind.
-Everything is a Server Component reading the database directly, with Server
-Actions for writes; there's one API route, for the importer, because it needs
-to fetch and parse an external page.
+Next.js App Router, Supabase Postgres via Drizzle, Supabase Storage for photos,
+Tailwind. Everything is a Server Component reading the database directly, with
+Server Actions for writes. Two API routes handle the things actions can't: the
+importer, which fetches and parses an external page, and photo upload, which
+takes multipart file data.
 
 The interesting code is in `src/lib`:
 
@@ -78,6 +94,14 @@ recipes without clicking through the import screen once per link. It returns
 
 ## Deploying
 
-Push to GitHub, import the repo on Vercel, and set `DATABASE_URL` in the
-project's environment variables to the same Neon string. Nothing else to
+Push to GitHub, import the repo on Vercel, and copy all four environment
+variables from `.env.local` into the project's settings. Nothing else to
 configure.
+
+## A note on the photo bucket
+
+`npm run db:setup` creates the `recipe-photos` bucket as **public**, meaning
+anyone holding a photo's URL can view it. The URLs contain a random UUID so
+they aren't guessable, which is the right trade for a personal recipe box —
+public URLs render instantly and cost nothing. If this ever grows real accounts,
+make the bucket private and serve signed URLs instead.

@@ -1,12 +1,14 @@
-import { and, asc, desc, eq, gte, ilike, lte, or, sql } from "drizzle-orm";
+import { and, asc, desc, eq, getTableColumns, gte, ilike, lte, or, sql } from "drizzle-orm";
 import { db } from "@/db";
 import {
   groceryItems,
   ingredients,
   mealPlanEntries,
+  photos,
   recipes,
   steps,
   type Ingredient,
+  type Photo,
   type Recipe,
   type Step,
 } from "@/db/schema";
@@ -14,13 +16,32 @@ import {
 export type FullRecipe = Recipe & {
   ingredients: Ingredient[];
   steps: Step[];
+  photos: Photo[];
+  /** The recipe this was adapted from, if any. */
+  forkedFrom: { id: number; title: string } | null;
+  /** Versions of this recipe you've made yourself. */
+  forks: { id: number; title: string }[];
 };
+
+/** A recipe plus whichever photo should represent it in a list. */
+export type RecipeWithCover = Recipe & { coverPhotoUrl: string | null };
+
+/**
+ * Your own photo wins over whatever picture the source site published, and
+ * the one you marked as cover wins over the rest.
+ */
+const coverPhotoUrl = sql<string | null>`(
+  SELECT p.url FROM ${photos} p
+  WHERE p.recipe_id = ${recipes.id}
+  ORDER BY p.is_cover DESC, p.position ASC
+  LIMIT 1
+)`;
 
 export async function listRecipes(options?: {
   search?: string;
   tag?: string;
   favoritesOnly?: boolean;
-}): Promise<Recipe[]> {
+}): Promise<RecipeWithCover[]> {
   const filters = [];
 
   if (options?.search?.trim()) {
@@ -42,7 +63,10 @@ export async function listRecipes(options?: {
   }
 
   return db
-    .select()
+    .select({
+      ...getTableColumns(recipes),
+      coverPhotoUrl: coverPhotoUrl.as("cover_photo_url"),
+    })
     .from(recipes)
     .where(filters.length ? and(...filters) : undefined)
     .orderBy(desc(recipes.isFavorite), desc(recipes.createdAt));
@@ -52,20 +76,43 @@ export async function getRecipe(id: number): Promise<FullRecipe | null> {
   const [recipe] = await db.select().from(recipes).where(eq(recipes.id, id));
   if (!recipe) return null;
 
-  const [recipeIngredients, recipeSteps] = await Promise.all([
-    db
-      .select()
-      .from(ingredients)
-      .where(eq(ingredients.recipeId, id))
-      .orderBy(asc(ingredients.position)),
-    db
-      .select()
-      .from(steps)
-      .where(eq(steps.recipeId, id))
-      .orderBy(asc(steps.position)),
-  ]);
+  const [recipeIngredients, recipeSteps, recipePhotos, forks, forkedFrom] =
+    await Promise.all([
+      db
+        .select()
+        .from(ingredients)
+        .where(eq(ingredients.recipeId, id))
+        .orderBy(asc(ingredients.position)),
+      db
+        .select()
+        .from(steps)
+        .where(eq(steps.recipeId, id))
+        .orderBy(asc(steps.position)),
+      db
+        .select()
+        .from(photos)
+        .where(eq(photos.recipeId, id))
+        .orderBy(desc(photos.isCover), asc(photos.position)),
+      db
+        .select({ id: recipes.id, title: recipes.title })
+        .from(recipes)
+        .where(eq(recipes.forkedFromId, id)),
+      recipe.forkedFromId
+        ? db
+            .select({ id: recipes.id, title: recipes.title })
+            .from(recipes)
+            .where(eq(recipes.id, recipe.forkedFromId))
+        : Promise.resolve([]),
+    ]);
 
-  return { ...recipe, ingredients: recipeIngredients, steps: recipeSteps };
+  return {
+    ...recipe,
+    ingredients: recipeIngredients,
+    steps: recipeSteps,
+    photos: recipePhotos,
+    forks,
+    forkedFrom: forkedFrom[0] ?? null,
+  };
 }
 
 export async function getAllTags(): Promise<{ tag: string; count: number }[]> {

@@ -27,6 +27,13 @@ export const recipes = pgTable(
     notes: text("notes"),
     isFavorite: boolean("is_favorite").default(false).notNull(),
 
+    // Set when this recipe was forked from another one in the box. The
+    // original stays untouched, so "my version" and "what the site said" can
+    // both exist and be compared.
+    forkedFromId: integer("forked_from_id"),
+    // What you changed and why — the running story of making it yours.
+    adaptationNote: text("adaptation_note"),
+
     // Per-serving nutrition. Null means "unknown", which the UI renders
     // differently from a real zero.
     calories: real("calories"),
@@ -81,6 +88,33 @@ export const steps = pgTable(
   (t) => [index("steps_recipe_idx").on(t.recipeId)],
 );
 
+/**
+ * Photos you took. Separate from `recipes.imageUrl`, which holds whatever
+ * picture the original site published — your own shots take precedence over
+ * it, and survive if that remote URL ever rots.
+ */
+export const photos = pgTable(
+  "photos",
+  {
+    id: serial("id").primaryKey(),
+    recipeId: integer("recipe_id")
+      .notNull()
+      .references(() => recipes.id, { onDelete: "cascade" }),
+    // Path within the storage bucket, kept so the file can be deleted later.
+    storagePath: text("storage_path").notNull(),
+    url: text("url").notNull(),
+    caption: text("caption"),
+    position: integer("position").notNull().default(0),
+    // The one that represents the recipe in lists and cards.
+    isCover: boolean("is_cover").default(false).notNull(),
+    // Optional: pin a photo to a step, for "this is what it looks like when
+    // the onions are done".
+    stepPosition: integer("step_position"),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+  },
+  (t) => [index("photos_recipe_idx").on(t.recipeId)],
+);
+
 export const mealPlanEntries = pgTable(
   "meal_plan_entries",
   {
@@ -124,7 +158,12 @@ export const groceryItems = pgTable(
 export const recipesRelations = relations(recipes, ({ many }) => ({
   ingredients: many(ingredients),
   steps: many(steps),
+  photos: many(photos),
   mealPlanEntries: many(mealPlanEntries),
+}));
+
+export const photosRelations = relations(photos, ({ one }) => ({
+  recipe: one(recipes, { fields: [photos.recipeId], references: [recipes.id] }),
 }));
 
 export const ingredientsRelations = relations(ingredients, ({ one }) => ({
@@ -148,5 +187,6 @@ export const mealPlanRelations = relations(mealPlanEntries, ({ one }) => ({
 export type Recipe = typeof recipes.$inferSelect;
 export type Ingredient = typeof ingredients.$inferSelect;
 export type Step = typeof steps.$inferSelect;
+export type Photo = typeof photos.$inferSelect;
 export type MealPlanEntry = typeof mealPlanEntries.$inferSelect;
 export type GroceryItem = typeof groceryItems.$inferSelect;

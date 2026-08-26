@@ -6,4 +6,6 @@ export default {
   out: "./drizzle",
   dialect: "postgresql",
   dbCredentials: { url: process.env.DATABASE_URL! },
+  // Supabase pooler connections need this off for drizzle-kit introspection.
+  strict: true,
 } satisfies Config;

@@ -1,11 +1,14 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { Clock, ExternalLink, Pencil } from "lucide-react";
+import { Clock, ExternalLink, GitBranch, Pencil } from "lucide-react";
 import { AddToPlan } from "@/components/add-to-plan";
-import { ScaledRecipe } from "@/components/scaled-recipe";
+import { AdaptationNote, ForkButton } from "@/components/fork-button";
 import { FavoriteButton, PrintButton } from "@/components/favorite-button";
+import { PhotoGallery } from "@/components/photo-gallery";
+import { ScaledRecipe } from "@/components/scaled-recipe";
 import { formatMinutes } from "@/lib/dates";
 import { getRecipe } from "@/lib/queries";
+import { photosEnabled } from "@/lib/supabase";
 
 export const dynamic = "force-dynamic";
 
@@ -21,11 +24,31 @@ export default async function RecipePage({
   const prep = formatMinutes(recipe.prepMinutes);
   const cook = formatMinutes(recipe.cookMinutes);
 
+  // Your own photo, if you've taken one, otherwise whatever the source
+  // published.
+  const cover = recipe.photos.find((p) => p.isCover) ?? recipe.photos[0];
+  const heroUrl = cover?.url ?? recipe.imageUrl;
+
+  const isMine = recipe.forkedFromId !== null;
+
   return (
     <article>
       <header className="mb-8">
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div className="min-w-0 flex-1">
+            {isMine && recipe.forkedFrom && (
+              <p className="mb-2 flex items-center gap-1.5 text-xs text-muted">
+                <GitBranch size={12} />
+                Your version, adapted from{" "}
+                <Link
+                  href={`/recipes/${recipe.forkedFrom.id}`}
+                  className="text-accent underline underline-offset-2"
+                >
+                  the original
+                </Link>
+              </p>
+            )}
+
             <h1 className="font-serif text-3xl leading-tight font-semibold text-balance sm:text-4xl">
               {recipe.title}
             </h1>
@@ -77,15 +100,37 @@ export default async function RecipePage({
             )}
           </div>
 
-          {recipe.imageUrl && (
+          {heroUrl && (
             // eslint-disable-next-line @next/next/no-img-element
             <img
-              src={recipe.imageUrl}
+              src={heroUrl}
               alt=""
               className="h-36 w-36 shrink-0 rounded-xl object-cover sm:h-44 sm:w-44"
             />
           )}
         </div>
+
+        {/* Versions you've already made, so you don't fork the same thing twice. */}
+        {recipe.forks.length > 0 && (
+          <div className="no-print mt-5 rounded-xl border border-rule bg-card px-3.5 py-2.5">
+            <p className="text-xs text-muted">
+              {recipe.forks.length === 1
+                ? "You have a version of this:"
+                : "Your versions of this:"}{" "}
+              {recipe.forks.map((fork, index) => (
+                <span key={fork.id}>
+                  {index > 0 && ", "}
+                  <Link
+                    href={`/recipes/${fork.id}`}
+                    className="text-accent underline underline-offset-2"
+                  >
+                    {fork.title}
+                  </Link>
+                </span>
+              ))}
+            </p>
+          </div>
+        )}
 
         <div className="no-print mt-6 flex flex-wrap items-center gap-2">
           <AddToPlan recipeId={recipe.id} />
@@ -94,6 +139,7 @@ export default async function RecipePage({
             <Pencil size={14} />
             Edit
           </Link>
+          {!isMine && <ForkButton recipeId={recipe.id} />}
           <PrintButton />
         </div>
       </header>
@@ -102,6 +148,7 @@ export default async function RecipePage({
         baseServings={recipe.servings}
         ingredients={recipe.ingredients}
         steps={recipe.steps}
+        photos={recipe.photos}
         storedMacros={{
           calories: recipe.calories,
           proteinG: recipe.proteinG,
@@ -114,8 +161,21 @@ export default async function RecipePage({
         nutritionSource={recipe.nutritionSource}
       />
 
+      <PhotoGallery
+        recipeId={recipe.id}
+        photos={recipe.photos}
+        steps={recipe.steps}
+        uploadsEnabled={photosEnabled()}
+      />
+
+      {isMine && (
+        <section className="no-print mt-8">
+          <AdaptationNote recipeId={recipe.id} initial={recipe.adaptationNote} />
+        </section>
+      )}
+
       {recipe.notes && (
-        <section className="mt-10 rounded-xl border border-rule bg-card p-5">
+        <section className="mt-8 rounded-xl border border-rule bg-card p-5">
           <h2 className="text-xs font-semibold tracking-wider text-muted uppercase">
             Your notes
           </h2>

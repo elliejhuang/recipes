@@ -1,6 +1,6 @@
 "use server";
 
-import { and, eq, gte, lte, sql } from "drizzle-orm";
+import { and, asc, eq, gte, lte, sql } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { db } from "@/db";
@@ -8,6 +8,7 @@ import {
   groceryItems,
   ingredients,
   mealPlanEntries,
+  photos,
   recipes,
   steps,
 } from "@/db/schema";
@@ -128,6 +129,129 @@ export async function toggleFavorite(id: number, value: boolean) {
   await db.update(recipes).set({ isFavorite: value }).where(eq(recipes.id, id));
   revalidatePath("/");
   revalidatePath(`/recipes/${id}`);
+}
+
+
+/* ---------------------------------------------------------------- fork --- */
+
+/**
+ * Makes your own version of a recipe.
+ *
+ * A recipe you pulled off the internet is a record of what someone else
+ * cooked. The moment you make it, you start changing things — more garlic,
+ * less time, your own photos — and those changes shouldn't overwrite the
+ * reference. So this copies everything into a new recipe, links it back to
+ * the original, and leaves the original exactly as imported.
+ */
+export async function forkRecipe(id: number): Promise<number> {
+  const [source] = await db.select().from(recipes).where(eq(recipes.id, id));
+  if (!source) throw new Error("That recipe doesn't exist.");
+
+  const [sourceIngredients, sourceSteps] = await Promise.all([
+    db.select().from(ingredients).where(eq(ingredients.recipeId, id)).orderBy(asc(ingredients.position)),
+    db.select().from(steps).where(eq(steps.recipeId, id)).orderBy(asc(steps.position)),
+  ]);
+
+  const [copy] = await db
+    .insert(recipes)
+    .values({
+      title: source.title,
+      description: source.description,
+      // Keep the original's photo as a starting point; your own uploads will
+      // take over as the cover as soon as you add one.
+      imageUrl: source.imageUrl,
+      // Credit stays with whoever published it, even a fork deep down.
+      sourceUrl: source.sourceUrl,
+      sourceName: source.sourceName,
+      servings: source.servings,
+      prepMinutes: source.prepMinutes,
+      cookMinutes: source.cookMinutes,
+      tags: source.tags,
+      notes: source.notes,
+      calories: source.calories,
+      proteinG: source.proteinG,
+      carbsG: source.carbsG,
+      fatG: source.fatG,
+      fiberG: source.fiberG,
+      sugarG: source.sugarG,
+      sodiumMg: source.sodiumMg,
+      nutritionSource: source.nutritionSource,
+      forkedFromId: source.id,
+    })
+    .returning({ id: recipes.id });
+
+  if (sourceIngredients.length) {
+    await db.insert(ingredients).values(
+      sourceIngredients.map((row) => ({
+        recipeId: copy.id,
+        position: row.position,
+        raw: row.raw,
+        quantity: row.quantity,
+        unit: row.unit,
+        name: row.name,
+        note: row.note,
+        section: row.section,
+      })),
+    );
+  }
+
+  if (sourceSteps.length) {
+    await db.insert(steps).values(
+      sourceSteps.map((row) => ({
+        recipeId: copy.id,
+        position: row.position,
+        text: row.text,
+        section: row.section,
+      })),
+    );
+  }
+
+  revalidatePath("/");
+  revalidatePath(`/recipes/${id}`);
+  return copy.id;
+}
+
+export async function updateAdaptationNote(id: number, note: string) {
+  await db
+    .update(recipes)
+    .set({ adaptationNote: note.trim() || null })
+    .where(eq(recipes.id, id));
+  revalidatePath(`/recipes/${id}`);
+}
+
+/* -------------------------------------------------------------- photos --- */
+
+export async function setCoverPhoto(photoId: number, recipeId: number) {
+  await db
+    .update(photos)
+    .set({ isCover: false })
+    .where(and(eq(photos.recipeId, recipeId), eq(photos.isCover, true)));
+  await db.update(photos).set({ isCover: true }).where(eq(photos.id, photoId));
+
+  revalidatePath("/");
+  revalidatePath(`/recipes/${recipeId}`);
+}
+
+export async function updatePhotoCaption(photoId: number, recipeId: number, caption: string) {
+  await db
+    .update(photos)
+    .set({ caption: caption.trim() || null })
+    .where(eq(photos.id, photoId));
+  revalidatePath(`/recipes/${recipeId}`);
+}
+
+export async function updatePhotoStep(
+  photoId: number,
+  recipeId: number,
+  stepPosition: number | null,
+) {
+  await db.update(photos).set({ stepPosition }).where(eq(photos.id, photoId));
+  revalidatePath(`/recipes/${recipeId}`);
+}
+
+export async function refreshRecipe(recipeId: number) {
+  revalidatePath("/");
+  revalidatePath(`/recipes/${recipeId}`);
 }
 
 /* ---------------------------------------------------------------- plan --- */

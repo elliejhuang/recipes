@@ -3,7 +3,7 @@
 import { useMemo, useState } from "react";
 import { Minus, Plus } from "lucide-react";
 import { clsx } from "clsx";
-import type { Ingredient, Step } from "@/db/schema";
+import type { Ingredient, Photo, Step } from "@/db/schema";
 import { MacroSummary } from "./macros";
 import { estimateMacros, type Macros } from "@/lib/nutrition";
 import { formatQuantity, formatUnit } from "@/lib/units";
@@ -12,12 +12,14 @@ export function ScaledRecipe({
   baseServings,
   ingredients,
   steps,
+  photos,
   storedMacros,
   nutritionSource,
 }: {
   baseServings: number;
   ingredients: Ingredient[];
   steps: Step[];
+  photos: Photo[];
   storedMacros: Macros;
   nutritionSource: string | null;
 }) {
@@ -136,14 +138,41 @@ export function ScaledRecipe({
           <p className="text-sm text-faint">No steps saved for this one.</p>
         ) : (
           <ol className="space-y-5">
-            {steps.map((step, index) => (
-              <li key={step.id} className="flex gap-4">
-                <span className="mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full border border-rule text-xs font-medium tabular-nums text-muted">
-                  {index + 1}
-                </span>
-                <p className="text-[15px] leading-relaxed">{step.text}</p>
-              </li>
-            ))}
+            {steps.map((step, index) => {
+              const stepPhotos = photos.filter(
+                (photo) => photo.stepPosition === step.position,
+              );
+              return (
+                <li key={step.id} className="flex gap-4">
+                  <span className="mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full border border-rule text-xs font-medium tabular-nums text-muted">
+                    {index + 1}
+                  </span>
+                  <div className="min-w-0 flex-1">
+                    <p className="text-[15px] leading-relaxed">{step.text}</p>
+                    {stepPhotos.length > 0 && (
+                      <div className="mt-2.5 flex flex-wrap gap-2">
+                        {stepPhotos.map((photo) => (
+                          <figure key={photo.id} className="w-32">
+                            {/* eslint-disable-next-line @next/next/no-img-element */}
+                            <img
+                              src={photo.url}
+                              alt={photo.caption ?? ""}
+                              loading="lazy"
+                              className="aspect-square w-full rounded-lg object-cover"
+                            />
+                            {photo.caption && (
+                              <figcaption className="mt-1 text-[11px] leading-snug text-faint">
+                                {photo.caption}
+                              </figcaption>
+                            )}
+                          </figure>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </li>
+              );
+            })}
           </ol>
         )}
       </div>

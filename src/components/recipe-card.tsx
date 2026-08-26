@@ -1,13 +1,16 @@
 import Link from "next/link";
 import { Clock, Star, Users } from "lucide-react";
-import type { Recipe } from "@/db/schema";
+import type { RecipeWithCover } from "@/lib/queries";
 import { formatMinutes } from "@/lib/dates";
 import { MacroLine } from "./macros";
 
-export function RecipeCard({ recipe }: { recipe: Recipe }) {
+export function RecipeCard({ recipe }: { recipe: RecipeWithCover }) {
   const time = formatMinutes(
     (recipe.prepMinutes ?? 0) + (recipe.cookMinutes ?? 0),
   );
+
+  // A photo you took beats the one the site published.
+  const imageUrl = recipe.coverPhotoUrl ?? recipe.imageUrl;
 
   return (
     <Link
@@ -15,13 +18,13 @@ export function RecipeCard({ recipe }: { recipe: Recipe }) {
       className="group flex flex-col overflow-hidden rounded-xl border border-rule bg-card transition-colors hover:border-faint"
     >
       <div className="relative aspect-[4/3] overflow-hidden bg-paper">
-        {recipe.imageUrl ? (
+        {imageUrl ? (
           // Recipe images come from arbitrary hosts, so next/image's remote
           // allowlist would need editing for every new site. A plain img keeps
           // importing from anywhere friction-free.
           // eslint-disable-next-line @next/next/no-img-element
           <img
-            src={recipe.imageUrl}
+            src={imageUrl}
             alt=""
             loading="lazy"
             className="h-full w-full object-cover"

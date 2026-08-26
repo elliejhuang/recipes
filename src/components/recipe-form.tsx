@@ -2,7 +2,7 @@
 
 import { useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { Loader2, Sparkles, Trash2 } from "lucide-react";
+import { Camera, Loader2, Sparkles, Trash2 } from "lucide-react";
 import { clsx } from "clsx";
 import { deleteRecipe, saveRecipe, type RecipeInput } from "@/lib/actions";
 import { estimateMacros, type Macros } from "@/lib/nutrition";
@@ -296,6 +296,13 @@ export function RecipeForm({
             </p>
           )}
         </div>
+
+        <p className="flex items-start gap-1.5 text-[11px] leading-snug text-faint">
+          <Camera size={12} className="mt-0.5 shrink-0" />
+          {values.id
+            ? "Photos live on the recipe page — save, and you'll land back there."
+            : "Save first, then you can add your own photos on the recipe page."}
+        </p>
 
         {error && (
           <p className="rounded-lg bg-accent-soft px-3 py-2 text-xs text-accent">
