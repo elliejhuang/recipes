@@ -15,6 +15,11 @@ export default function manifest(): MetadataRoute.Manifest {
     background_color: "#fcfcfd",
     theme_color: "#fcfcfd",
     orientation: "portrait",
+    share_target: {
+      action: "/recipes/import",
+      method: "GET",
+      params: { title: "title", text: "text", url: "url" },
+    },
     icons: [
       { src: "/icon", sizes: "512x512", type: "image/png", purpose: "any" },
       { src: "/apple-icon", sizes: "180x180", type: "image/png" },

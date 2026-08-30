@@ -28,8 +28,24 @@ question you can ask it. Tag, favorite, print.
 ingredients, steps, times, servings, tags, and any nutrition the site
 published — then shows you the result to check before saving. This reads the
 schema.org Recipe data that nearly every recipe site embeds to get its Google
-rich card, so it works broadly and costs nothing. Paywalled and app-only
-recipes are the exception.
+rich card, so it works broadly and costs nothing.
+
+**Pinterest** is resolved rather than scraped: a pin holds a picture and a link
+to the blog that has the recipe, so the pin's outbound URL is followed and that
+page is imported, keeping the pin's image if the destination has none. Pins
+that point at a roundup ("25 chicken dinners") fall back to the pin's own title
+and image.
+
+**Instagram can't be read from outside the app** — verified, not assumed. A
+logged-out request gets a login wall with no caption, no og:description and no
+image, and the oEmbed endpoint is retired. So the link is kept as the source and
+the caption is pasted in, which the free-text parser turns into ingredients and
+steps by shape: bullets and amounts are shopping, sentences opening with a
+cooking verb are method, and trailing hashtags are dropped.
+
+**Simplify steps** cuts a wordy method down to the part you look back at
+mid-cook — "Bake 350°F, 15 min". It's a button on the import screen, not
+something done to you.
 
 **Meal plan.** A Monday-to-Sunday grid, four meals a day. Drag between slots,
 set how many servings you're actually making, see calories and macros per day
@@ -91,6 +107,22 @@ There's also a development-only endpoint at `POST /api/seed` that takes the
 output of `/api/import` and saves it, which is the quick way to load a batch of
 recipes without clicking through the import screen once per link. It returns
 404 in production.
+
+## Sharing into it from a phone
+
+iOS doesn't implement Web Share Target, so a website cannot put itself in the
+share sheet. A Shortcut does the same job in one tap:
+
+1. Shortcuts → new shortcut, named "Save to Recipe Box"
+2. **Receive URLs from Share Sheet**
+3. **URL Encode**, input Shortcut Input
+4. **Text**: `https://your-deployment/recipes/import?url=` followed by the
+   encoded text
+5. **Open URLs** with that text
+
+`/recipes/import?url=…` runs the import on arrival, so sharing a pin goes
+straight to a filled-in draft. Android needs none of this — the manifest
+declares a `share_target` and the app appears in the sheet directly.
 
 ## Deploying
 
