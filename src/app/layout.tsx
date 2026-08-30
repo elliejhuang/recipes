@@ -48,9 +48,6 @@ export default function RootLayout({
               ))}
             </nav>
 
-            <Link href="/recipes/new" className="btn btn-primary ml-auto !px-3 !py-1.5 !text-sm">
-              Add
-            </Link>
           </div>
         </header>
 

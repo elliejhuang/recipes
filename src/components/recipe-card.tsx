@@ -39,9 +39,17 @@ export function RecipeCard({ recipe }: { recipe: RecipeWithCover }) {
 }
 
 /** The wall itself, so every screen lays recipes out the same way. */
-export function RecipeGrid({ recipes }: { recipes: RecipeWithCover[] }) {
+export function RecipeGrid({
+  recipes,
+  lead,
+}: {
+  recipes: RecipeWithCover[];
+  /** Optional first tile — the Add tile on the recipes page. */
+  lead?: React.ReactNode;
+}) {
   return (
     <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
+      {lead}
       {recipes.map((recipe) => (
         <RecipeCard key={recipe.id} recipe={recipe} />
       ))}

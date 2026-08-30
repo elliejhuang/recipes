@@ -19,11 +19,14 @@ export function AlbumGrid({
   action,
 }: {
   tiles: AlbumTile[];
-  /** Trailing "new folder" / "new list" tile, rendered by the caller. */
+  /** The "new list" tile. Leads the grid — making one is the first thing you
+      want when there's nothing here, and it stays in a predictable place once
+      there is. */
   action?: React.ReactNode;
 }) {
   return (
     <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
+      {action}
       {tiles.map((tile) => {
         const inner = <AlbumFace tile={tile} />;
         return tile.href ? (
@@ -34,7 +37,6 @@ export function AlbumGrid({
           <div key={tile.key}>{inner}</div>
         );
       })}
-      {action}
     </div>
   );
 }

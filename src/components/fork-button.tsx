@@ -22,7 +22,7 @@ export function ForkButton({ recipeId }: { recipeId: number }) {
       onClick={() =>
         startTransition(async () => {
           const id = await forkRecipe(recipeId);
-          router.push(`/recipes/${id}/edit`);
+          router.push(`/recipes/${id}?edit=1`);
         })
       }
       className="btn"

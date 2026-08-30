@@ -2,8 +2,7 @@
 
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
-import Link from "next/link";
-import { Link2, Search, X } from "lucide-react";
+import { Search, X } from "lucide-react";
 
 export function SearchBar({ initial }: { initial: string }) {
   const router = useRouter();
@@ -46,10 +45,6 @@ export function SearchBar({ initial }: { initial: string }) {
           </button>
         )}
       </div>
-      <Link href="/recipes/import" className="btn shrink-0">
-        <Link2 size={14} />
-        Import
-      </Link>
     </div>
   );
 }
