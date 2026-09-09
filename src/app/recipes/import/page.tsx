@@ -1,3 +1,4 @@
+import { photosEnabled } from "@/lib/supabase";
 import { ImportClient } from "./import-client";
 
 export const dynamic = "force-dynamic";
@@ -12,5 +13,11 @@ export default async function ImportPage({
   searchParams: Promise<{ url?: string; text?: string }>;
 }) {
   const params = await searchParams;
-  return <ImportClient initialUrl={params.url ?? ""} />;
+  return (
+    <ImportClient
+      initialUrl={params.url ?? ""}
+      initialText={params.text ?? ""}
+      uploadsEnabled={photosEnabled()}
+    />
+  );
 }

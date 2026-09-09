@@ -73,6 +73,10 @@ export const ingredients = pgTable(
     note: text("note"),
     // Section header like "For the sauce" groups the lines under it.
     section: text("section"),
+    // Hand-entered calories for this line (the full recipe's worth of it, not
+    // per serving — the same basis the food-lookup path totals before
+    // dividing by servings), set when the nutrition table has no match.
+    caloriesOverride: integer("calories_override"),
   },
   (t) => [index("ingredients_recipe_idx").on(t.recipeId)],
 );

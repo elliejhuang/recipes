@@ -4,7 +4,16 @@ import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { Search, X } from "lucide-react";
 
-export function SearchBar({ initial }: { initial: string }) {
+export function SearchBar({
+  initial,
+  basePath = "/",
+  placeholder = "Search recipes and ingredients…",
+}: {
+  initial: string;
+  /** Where the "?q=" param lives — each list-y page searches its own route. */
+  basePath?: string;
+  placeholder?: string;
+}) {
   const router = useRouter();
   const [value, setValue] = useState(initial);
 
@@ -15,11 +24,13 @@ export function SearchBar({ initial }: { initial: string }) {
     const timer = setTimeout(() => {
       const params = new URLSearchParams();
       if (value.trim()) params.set("q", value.trim());
-      router.replace(params.toString() ? `/?${params}` : "/", { scroll: false });
+      router.replace(params.toString() ? `${basePath}?${params}` : basePath, {
+        scroll: false,
+      });
     }, 250);
 
     return () => clearTimeout(timer);
-  }, [value, initial, router]);
+  }, [value, initial, basePath, router]);
 
   return (
     <div className="flex gap-2">
@@ -32,7 +43,7 @@ export function SearchBar({ initial }: { initial: string }) {
           type="search"
           value={value}
           onChange={(e) => setValue(e.target.value)}
-          placeholder="Search recipes and ingredients…"
+          placeholder={placeholder}
           className="field !pl-9"
         />
         {value && (

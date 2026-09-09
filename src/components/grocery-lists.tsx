@@ -1,7 +1,7 @@
 "use client";
 
 import { useRef, useState, useTransition } from "react";
-import { ArrowLeft, Check, Plus, Trash2, X } from "lucide-react";
+import { ArrowLeft, Check, Plus, Search, Trash2, X } from "lucide-react";
 import { clsx } from "clsx";
 import {
   addGroceryItem,
@@ -18,6 +18,7 @@ import { formatMeasure } from "@/lib/units";
 
 export function GroceryLists({ lists }: { lists: GroceryListWithItems[] }) {
   const [openId, setOpenId] = useState<number | null>(null);
+  const [query, setQuery] = useState("");
   const [, startTransition] = useTransition();
 
   const open = lists.find((l) => l.id === openId);
@@ -37,9 +38,40 @@ export function GroceryLists({ lists }: { lists: GroceryListWithItems[] }) {
     );
   }
 
+  // Client-side: this component owns "which list is open" as local state
+  // rather than a route, so there's no URL search param to hang a server
+  // filter off the way the homepage and Lists page do.
+  const visible = query.trim()
+    ? lists.filter((l) => l.name.toLowerCase().includes(query.trim().toLowerCase()))
+    : lists;
+
   return (
-    <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
-      {lists.map((list) => {
+    <div>
+      <div className="relative mb-5">
+        <Search
+          size={15}
+          className="pointer-events-none absolute top-1/2 left-3 -translate-y-1/2 text-faint"
+        />
+        <input
+          type="search"
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          placeholder="Search grocery lists…"
+          className="field !pl-9"
+        />
+        {query && (
+          <button
+            onClick={() => setQuery("")}
+            aria-label="Clear search"
+            className="absolute top-1/2 right-2.5 -translate-y-1/2 text-faint hover:text-ink"
+          >
+            <X size={15} />
+          </button>
+        )}
+      </div>
+
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
+      {visible.map((list) => {
         const outstanding = list.items.filter((i) => !i.checked).length;
         return (
           <button
@@ -75,20 +107,23 @@ export function GroceryLists({ lists }: { lists: GroceryListWithItems[] }) {
         );
       })}
 
-      <div>
-        <button
-          onClick={() =>
-            startTransition(async () => {
-              const id = await createGroceryList("New list");
-              setOpenId(id);
-            })
-          }
-          className="flex aspect-square w-full flex-col items-center justify-center gap-1.5 rounded-xl border border-dashed border-rule text-muted hover:border-accent hover:text-accent"
-        >
-          <Plus size={20} />
-          <span className="text-xs">New list</span>
-        </button>
-        <div className="mt-1.5 px-0.5 text-sm font-medium text-transparent">.</div>
+      {!query && (
+        <div>
+          <button
+            onClick={() =>
+              startTransition(async () => {
+                const id = await createGroceryList("New list");
+                setOpenId(id);
+              })
+            }
+            className="flex aspect-square w-full flex-col items-center justify-center gap-1.5 rounded-xl border border-dashed border-rule text-muted hover:border-accent hover:text-accent"
+          >
+            <Plus size={20} />
+            <span className="text-xs">New list</span>
+          </button>
+          <div className="mt-1.5 px-0.5 text-sm font-medium text-transparent">.</div>
+        </div>
+      )}
       </div>
     </div>
   );

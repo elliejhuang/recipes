@@ -1,5 +1,5 @@
 import type { Metadata, Viewport } from "next";
-import Link from "next/link";
+import { BottomNav } from "@/components/bottom-nav";
 import { DevStudioMount } from "@/components/dev-studio/mount";
 import "./globals.css";
 
@@ -11,6 +11,11 @@ export const metadata: Metadata = {
 export const viewport: Viewport = {
   width: "device-width",
   initialScale: 1,
+  // Fixed at 1x — this is an app you tap through, not a document you'd ever
+  // want to pinch-zoom, and an accidental double-tap zoom on a phone is more
+  // often a mis-tap than intent.
+  maximumScale: 1,
+  userScalable: false,
   // Let the page paint under the notch and home indicator; padding below puts
   // the content back where it belongs.
   viewportFit: "cover",
@@ -20,12 +25,6 @@ export const viewport: Viewport = {
   ],
 };
 
-const NAV = [
-  { href: "/", label: "Recipes" },
-  { href: "/lists", label: "Lists" },
-  { href: "/groceries", label: "Groceries" },
-];
-
 export default function RootLayout({
   children,
 }: {
@@ -34,26 +33,11 @@ export default function RootLayout({
   return (
     <html lang="en">
       <body className="min-h-dvh">
-        <header className="no-print sticky top-0 z-30 border-b border-rule bg-paper/85 backdrop-blur">
-          <div className="mx-auto flex h-14 max-w-5xl items-center gap-1 px-4 pt-[env(safe-area-inset-top)]">
-            <nav className="flex items-center gap-1">
-              {NAV.map(({ href, label }) => (
-                <Link
-                  key={href}
-                  href={href}
-                  className="rounded-lg px-2.5 py-2 text-sm text-muted hover:bg-card hover:text-ink"
-                >
-                  {label}
-                </Link>
-              ))}
-            </nav>
-
-          </div>
-        </header>
-
-        <main className="mx-auto max-w-5xl px-4 py-6 pb-[calc(2rem+env(safe-area-inset-bottom))] sm:py-8">
+        <main className="mx-auto max-w-5xl px-4 pt-[calc(2rem+env(safe-area-inset-top))] pb-24 sm:pt-10">
           {children}
         </main>
+
+        <BottomNav />
 
         <DevStudioMount />
       </body>

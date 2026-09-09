@@ -16,6 +16,7 @@ export default async function HomePage({
 
   return (
     <div>
+      <h1 className="mb-4 font-serif text-2xl font-semibold">Recipes</h1>
       <SearchBar initial={search} />
 
       <div className="mt-5">

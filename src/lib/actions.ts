@@ -16,7 +16,7 @@ import {
 import { aggregateGroceries } from "./aggregate-groceries";
 import { estimateMacros } from "./nutrition";
 import { parseIngredientLine } from "./parse-ingredient";
-import { ensureAutoList, ensureDefaultList, getPlanIngredients } from "./queries";
+import { ensureAutoList, getPlanIngredients } from "./queries";
 
 export type RecipeInput = {
   id?: number;
@@ -49,6 +49,18 @@ export type RecipeInput = {
  * stored the same way no matter how it got in.
  */
 async function writeIngredients(recipeId: number, lines: string[]) {
+  // A hand-entered calorie override lives on the ingredient row, but every
+  // save deletes and reinserts every row for the recipe. Carry overrides
+  // forward by matching on the raw line text — exact rewordings lose the
+  // override, but an untouched line keeps it.
+  const previous = await db
+    .select({ raw: ingredients.raw, caloriesOverride: ingredients.caloriesOverride })
+    .from(ingredients)
+    .where(eq(ingredients.recipeId, recipeId));
+  const overrideByRaw = new Map(
+    previous.filter((p) => p.caloriesOverride != null).map((p) => [p.raw, p.caloriesOverride]),
+  );
+
   await db.delete(ingredients).where(eq(ingredients.recipeId, recipeId));
 
   const rows = lines
@@ -65,6 +77,7 @@ async function writeIngredients(recipeId: number, lines: string[]) {
         name: parsed.name,
         note: parsed.note,
         section: null,
+        caloriesOverride: overrideByRaw.get(parsed.raw) ?? null,
       };
     });
 
@@ -155,6 +168,23 @@ export async function updateRecipeField(
   revalidatePath("/");
 }
 
+/**
+ * Hand-entered calories for one ingredient line, for when the nutrition
+ * table has no match for it. Stored on the line itself so it feeds straight
+ * back into the recipe's estimate.
+ */
+export async function setIngredientCalories(
+  ingredientId: number,
+  recipeId: number,
+  calories: number | null,
+) {
+  await db
+    .update(ingredients)
+    .set({ caloriesOverride: calories })
+    .where(eq(ingredients.id, ingredientId));
+  revalidatePath(`/recipes/${recipeId}`);
+}
+
 export async function deleteRecipe(id: number) {
   await db.delete(recipes).where(eq(recipes.id, id));
   await rebuildAutoList();
@@ -166,64 +196,6 @@ export async function toggleFavorite(id: number, value: boolean) {
   await db.update(recipes).set({ isFavorite: value }).where(eq(recipes.id, id));
   revalidatePath("/");
   revalidatePath(`/recipes/${id}`);
-}
-
-/**
- * Makes your own version of a recipe: everything copied, nothing shared, so
- * amounts and method can diverge while the imported original stays put.
- */
-export async function forkRecipe(id: number): Promise<number> {
-  const [source] = await db.select().from(recipes).where(eq(recipes.id, id));
-  if (!source) throw new Error("That recipe doesn't exist.");
-
-  const sourceIngredients = await db
-    .select()
-    .from(ingredients)
-    .where(eq(ingredients.recipeId, id))
-    .orderBy(ingredients.position);
-
-  const [copy] = await db
-    .insert(recipes)
-    .values({
-      title: source.title,
-      imageUrl: source.imageUrl,
-      sourceUrl: source.sourceUrl,
-      sourceName: source.sourceName,
-      servings: source.servings,
-      prepMinutes: source.prepMinutes,
-      cookMinutes: source.cookMinutes,
-      tags: source.tags,
-      method: source.method,
-      notes: source.notes,
-      calories: source.calories,
-      proteinG: source.proteinG,
-      carbsG: source.carbsG,
-      fatG: source.fatG,
-      fiberG: source.fiberG,
-      sugarG: source.sugarG,
-      sodiumMg: source.sodiumMg,
-      nutritionSource: source.nutritionSource,
-      forkedFromId: source.id,
-    })
-    .returning({ id: recipes.id });
-
-  if (sourceIngredients.length) {
-    await db.insert(ingredients).values(
-      sourceIngredients.map((row) => ({
-        recipeId: copy.id,
-        position: row.position,
-        raw: row.raw,
-        quantity: row.quantity,
-        unit: row.unit,
-        name: row.name,
-        note: row.note,
-        section: row.section,
-      })),
-    );
-  }
-
-  revalidatePath("/");
-  return copy.id;
 }
 
 /* ---------------------------------------------------------------- lists --- */
@@ -270,29 +242,6 @@ export async function setRecipeLists(recipeId: number, listIds: number[]) {
     await db
       .insert(listMembers)
       .values(listIds.map((listId) => ({ recipeId, listId })));
-  }
-
-  await rebuildAutoList();
-  revalidatePath("/lists");
-  revalidatePath("/groceries");
-  revalidatePath(`/recipes/${recipeId}`);
-}
-
-/** One tap from a recipe: on or off the default "To Make" list. */
-export async function toggleDefaultList(recipeId: number, on: boolean) {
-  const defaultList = await ensureDefaultList();
-
-  if (on) {
-    await db
-      .insert(listMembers)
-      .values({ recipeId, listId: defaultList.id })
-      .onConflictDoNothing();
-  } else {
-    await db
-      .delete(listMembers)
-      .where(
-        and(eq(listMembers.recipeId, recipeId), eq(listMembers.listId, defaultList.id)),
-      );
   }
 
   await rebuildAutoList();

@@ -20,6 +20,8 @@ export type EstimateInput = {
   quantity: number | null;
   unit: string | null;
   name: string | null;
+  /** Hand-entered calories for this line, used when there's no food match. */
+  caloriesOverride?: number | null;
 };
 
 export type Estimate = {
@@ -36,7 +38,7 @@ export type Estimate = {
  * table speaks. Returns null when the line can't be weighed — "salt to taste"
  * has no amount, and an unknown food has no density to convert a cup with.
  */
-function toGrams(input: EstimateInput): number | null {
+export function toGrams(input: EstimateInput): number | null {
   const food = input.name ? lookupFood(input.name) : null;
   if (!food || input.quantity === null) return null;
 
@@ -65,6 +67,16 @@ function toGrams(input: EstimateInput): number | null {
 }
 
 /**
+ * True when an ingredient line has neither a food match nor a hand-entered
+ * override, so the UI can offer to fill the gap.
+ */
+export function needsCalories(input: EstimateInput): boolean {
+  if (input.name === null || input.quantity === null) return false;
+  if (input.caloriesOverride != null) return false;
+  return !lookupFood(input.name) || toGrams(input) === null;
+}
+
+/**
  * Estimates a recipe's macros from its ingredients.
  *
  * Deliberately reports coverage alongside the numbers: an estimate that
@@ -90,6 +102,12 @@ export function estimateMacros(
     if (!ing.name) continue;
     if (ing.quantity === null) continue;
     countable++;
+
+    if (ing.caloriesOverride != null) {
+      totals.calories += ing.caloriesOverride;
+      matched++;
+      continue;
+    }
 
     const grams = toGrams(ing);
     const food = lookupFood(ing.name);

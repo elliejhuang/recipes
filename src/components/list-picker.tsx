@@ -2,45 +2,10 @@
 
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { Check, ListPlus, Loader2, Plus } from "lucide-react";
+import { Bookmark, Check, Loader2, Plus } from "lucide-react";
 import { clsx } from "clsx";
-import { createList, setRecipeLists, toggleDefaultList } from "@/lib/actions";
+import { createList, setRecipeLists } from "@/lib/actions";
 import type { ListWithCount } from "@/lib/queries";
-
-/**
- * One tap onto the default list. The full picker is a second button, because
- * "I want to cook this" is the common case and shouldn't cost a menu.
- */
-export function ToMakeButton({
-  recipeId,
-  lists,
-  listIds,
-}: {
-  recipeId: number;
-  lists: ListWithCount[];
-  listIds: number[];
-}) {
-  const defaultList = lists.find((l) => l.isDefault);
-  const [on, setOn] = useState(
-    defaultList ? listIds.includes(defaultList.id) : false,
-  );
-  const [, startTransition] = useTransition();
-
-  return (
-    <button
-      onClick={() =>
-        startTransition(async () => {
-          setOn(!on);
-          await toggleDefaultList(recipeId, !on);
-        })
-      }
-      className={clsx("btn", on && "!border-accent !text-accent")}
-    >
-      {on ? <Check size={14} /> : <Plus size={14} />}
-      To Make
-    </button>
-  );
-}
 
 /**
  * Every list, with the ones this recipe is already on ticked. This is the only
@@ -86,9 +51,12 @@ export function AddToListButton({
 
   return (
     <div className="relative inline-block">
-      <button onClick={() => setOpen((o) => !o)} className="btn">
-        {pending ? <Loader2 size={14} className="animate-spin" /> : <ListPlus size={14} />}
-        Add to list
+      <button
+        onClick={() => setOpen((o) => !o)}
+        aria-label="Save to a list"
+        className="shrink-0 rounded-lg p-2 text-ink hover:bg-card"
+      >
+        {pending ? <Loader2 size={16} className="animate-spin" /> : <Bookmark size={16} />}
       </button>
 
       {open && (

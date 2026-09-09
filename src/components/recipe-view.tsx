@@ -3,6 +3,7 @@
 import { useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import {
+  ArrowLeft,
   Check,
   ExternalLink,
   Loader2,
@@ -13,13 +14,12 @@ import {
   X,
 } from "lucide-react";
 import { clsx } from "clsx";
-import { deleteRecipe, saveRecipe } from "@/lib/actions";
-import { estimateMacros, type Macros } from "@/lib/nutrition";
+import { deleteRecipe, saveRecipe, setIngredientCalories } from "@/lib/actions";
+import { estimateMacros, needsCalories, type Macros } from "@/lib/nutrition";
 import { parseIngredientLine } from "@/lib/parse-ingredient";
 import { formatMeasure } from "@/lib/units";
 import type { FullRecipe, ListWithCount } from "@/lib/queries";
-import { AddToListButton, ToMakeButton } from "./list-picker";
-import { ForkButton } from "./fork-button";
+import { AddToListButton } from "./list-picker";
 import { PhotoGallery } from "./photo-gallery";
 
 const NUTRIENTS = [
@@ -70,12 +70,36 @@ export function RecipeView({
   const [viewServings, setViewServings] = useState(recipe.servings);
   const [ticked, setTicked] = useState<Set<number>>(new Set());
 
+  // Which ingredient's hand-entered calories are being edited, if any.
+  const [calorieEditId, setCalorieEditId] = useState<number | null>(null);
+  const [calorieDraft, setCalorieDraft] = useState("");
+  const [, startCaloriesTransition] = useTransition();
+
   const scale = viewServings / Math.max(1, recipe.servings);
 
+  // Overrides only line up with `recipe.ingredients` while the text hasn't
+  // been touched — once editing starts, the ingredient being typed may not
+  // correspond to the same row any more.
   const parsed = useMemo(
-    () => lines.map((line) => parseIngredientLine(line)),
-    [lines],
+    () =>
+      lines.map((line, index) => {
+        const p = parseIngredientLine(line);
+        return editing
+          ? p
+          : { ...p, caloriesOverride: recipe.ingredients[index]?.caloriesOverride ?? null };
+      }),
+    [lines, editing, recipe.ingredients],
   );
+
+  const saveCalories = (ingredientId: number) => {
+    const trimmed = calorieDraft.trim();
+    const value = trimmed === "" ? null : Number(trimmed);
+    setCalorieEditId(null);
+    startCaloriesTransition(async () => {
+      await setIngredientCalories(ingredientId, recipe.id, Number.isFinite(value as number) ? value : null);
+      router.refresh();
+    });
+  };
 
   const storedMacros: Macros = {
     calories: recipe.calories,
@@ -147,6 +171,61 @@ export function RecipeView({
 
   return (
     <article>
+      {/* Pinned at the real top of the viewport once you've scrolled past the
+          full title below, so back/save/edit stay reachable without a trip
+          back up the page. Its own safe-area padding matters here — unlike
+          the header underneath, this bar does sit flush against a notch once
+          it's actually stuck. */}
+      <div className="no-print sticky top-0 z-20 -mx-4 mb-6 flex items-center gap-2 border-b border-rule bg-paper/90 px-4 py-3 pt-[calc(0.75rem+env(safe-area-inset-top))] backdrop-blur">
+        <button
+          onClick={() => router.push("/")}
+          aria-label="Back to recipes"
+          className="shrink-0 rounded-lg p-2 text-ink hover:bg-card"
+        >
+          <ArrowLeft size={16} />
+        </button>
+        <span className="min-w-0 flex-1 truncate text-sm font-medium">
+          {editing ? title : recipe.title}
+        </span>
+        {editing ? (
+          <>
+            <button onClick={save} disabled={pending} className="btn btn-primary shrink-0">
+              {pending && <Loader2 size={14} className="animate-spin" />}
+              Done
+            </button>
+            <button onClick={cancel} className="btn shrink-0">
+              Cancel
+            </button>
+            <button
+              onClick={() => {
+                if (confirm(`Delete "${recipe.title}"? This can't be undone.`)) {
+                  startTransition(() => void deleteRecipe(recipe.id));
+                }
+              }}
+              aria-label="Delete recipe"
+              className="btn shrink-0 !px-2.5 text-muted hover:!border-accent hover:text-accent"
+            >
+              <Trash2 size={15} />
+            </button>
+          </>
+        ) : (
+          <>
+            <AddToListButton
+              recipeId={recipe.id}
+              lists={lists}
+              listIds={recipe.listIds}
+            />
+            <button
+              onClick={() => setEditing(true)}
+              aria-label="Edit recipe"
+              className="shrink-0 rounded-lg p-2 text-ink hover:bg-card"
+            >
+              <Pencil size={16} />
+            </button>
+          </>
+        )}
+      </div>
+
       <header className="mb-7">
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div className="min-w-0 flex-1">
@@ -185,54 +264,11 @@ export function RecipeView({
             />
           )}
         </div>
-
-        <div className="no-print mt-5 flex flex-wrap items-center gap-2">
-          {editing ? (
-            <>
-              <button onClick={save} disabled={pending} className="btn btn-primary">
-                {pending && <Loader2 size={14} className="animate-spin" />}
-                Done
-              </button>
-              <button onClick={cancel} className="btn">
-                Cancel
-              </button>
-              <button
-                onClick={() => {
-                  if (confirm(`Delete "${recipe.title}"? This can't be undone.`)) {
-                    startTransition(() => void deleteRecipe(recipe.id));
-                  }
-                }}
-                aria-label="Delete recipe"
-                className="btn ml-auto !px-2.5 text-muted hover:!border-accent hover:text-accent"
-              >
-                <Trash2 size={15} />
-              </button>
-            </>
-          ) : (
-            <>
-              <ToMakeButton
-                recipeId={recipe.id}
-                lists={lists}
-                listIds={recipe.listIds}
-              />
-              <AddToListButton
-                recipeId={recipe.id}
-                lists={lists}
-                listIds={recipe.listIds}
-              />
-              <button onClick={() => setEditing(true)} className="btn">
-                <Pencil size={14} />
-                Edit
-              </button>
-              {recipe.forkedFromId === null && <ForkButton recipeId={recipe.id} />}
-            </>
-          )}
-        </div>
       </header>
 
       <div className="grid gap-8 lg:grid-cols-[20rem_1fr] lg:items-start">
         <aside className="space-y-5 lg:sticky lg:top-20">
-          <div className="flex items-center justify-between rounded-xl border border-rule bg-card px-3 py-2.5">
+          <div className="flex items-center justify-between px-1">
             <span className="text-sm text-muted">Serves</span>
             <div className="flex items-center gap-1">
               <button
@@ -271,61 +307,121 @@ export function RecipeView({
               <IngredientEditor lines={lines} onChange={setLines} />
             ) : (
               <ul className="space-y-0.5">
-                {recipe.ingredients.map((ingredient) => {
+                {recipe.ingredients.map((ingredient, index) => {
                   const isTicked = ticked.has(ingredient.id);
+                  // Only worth surfacing while the panel is actually
+                  // estimating from ingredients — an imported total already
+                  // has its own numbers and won't move.
+                  const canAddCalories =
+                    isEstimated && needsCalories(parsed[index] ?? ingredient);
+
                   return (
                     <li key={ingredient.id}>
-                      <button
-                        onClick={() =>
-                          setTicked((current) => {
-                            const next = new Set(current);
-                            if (next.has(ingredient.id)) next.delete(ingredient.id);
-                            else next.add(ingredient.id);
-                            return next;
-                          })
-                        }
-                        className="flex w-full items-start gap-2.5 rounded-lg px-1.5 py-2 text-left hover:bg-card"
-                      >
-                        <span
-                          className={clsx(
-                            "mt-0.5 flex h-[18px] w-[18px] shrink-0 items-center justify-center rounded border",
-                            isTicked
-                              ? "border-accent bg-accent text-white"
-                              : "border-faint",
-                          )}
+                      <div className="flex w-full items-start gap-1.5 rounded-lg px-1.5 py-2 hover:bg-card">
+                        <button
+                          onClick={() =>
+                            setTicked((current) => {
+                              const next = new Set(current);
+                              if (next.has(ingredient.id)) next.delete(ingredient.id);
+                              else next.add(ingredient.id);
+                              return next;
+                            })
+                          }
+                          className="flex flex-1 items-start gap-2.5 text-left"
                         >
-                          {isTicked && <Check size={12} strokeWidth={3} />}
-                        </span>
-                        <span
-                          className={clsx(
-                            "text-[15px] leading-snug",
-                            isTicked && "text-faint line-through",
-                          )}
-                        >
-                          {ingredient.quantity !== null && (
-                            <span className="font-medium tabular-nums">
-                              {formatMeasure(
-                                ingredient.quantity * scale,
-                                ingredient.unit,
-                              )}{" "}
-                            </span>
-                          )}
-                          {ingredient.name ?? ingredient.raw}
-                          {/* "minced", "cut into cubes" — instruction, not
-                              decoration, so it stays, just quieter. */}
-                          {ingredient.note && !isTicked && (
-                            <span className="text-faint"> · {ingredient.note}</span>
-                          )}
-                        </span>
-                      </button>
+                          <span
+                            className={clsx(
+                              "mt-0.5 flex h-[18px] w-[18px] shrink-0 items-center justify-center rounded border",
+                              isTicked
+                                ? "border-accent bg-accent text-white"
+                                : "border-faint",
+                            )}
+                          >
+                            {isTicked && <Check size={12} strokeWidth={3} />}
+                          </span>
+                          <span
+                            className={clsx(
+                              "text-[15px] leading-snug",
+                              isTicked && "text-faint line-through",
+                            )}
+                          >
+                            {ingredient.quantity !== null && (
+                              <span className="font-medium tabular-nums">
+                                {formatMeasure(
+                                  ingredient.quantity * scale,
+                                  ingredient.unit,
+                                )}{" "}
+                              </span>
+                            )}
+                            {ingredient.name ?? ingredient.raw}
+                            {/* "minced", "cut into cubes" — instruction, not
+                                decoration, so it stays, just quieter. */}
+                            {ingredient.note && !isTicked && (
+                              <span className="text-faint"> · {ingredient.note}</span>
+                            )}
+                          </span>
+                        </button>
+
+                        {calorieEditId === ingredient.id ? (
+                          <form
+                            onSubmit={(e) => {
+                              e.preventDefault();
+                              saveCalories(ingredient.id);
+                            }}
+                            className="mt-0.5 flex shrink-0 items-center gap-1"
+                          >
+                            <input
+                              autoFocus
+                              type="number"
+                              inputMode="numeric"
+                              min={0}
+                              value={calorieDraft}
+                              onChange={(e) => setCalorieDraft(e.target.value)}
+                              onBlur={() => saveCalories(ingredient.id)}
+                              placeholder="cal"
+                              aria-label={`Calories for ${ingredient.name ?? ingredient.raw}`}
+                              className="field w-16 !px-1.5 !py-1 !text-xs tabular-nums"
+                            />
+                            <button
+                              type="button"
+                              onClick={() => setCalorieEditId(null)}
+                              aria-label="Cancel"
+                              className="p-1 text-faint hover:text-accent"
+                            >
+                              <X size={12} />
+                            </button>
+                          </form>
+                        ) : ingredient.caloriesOverride != null ? (
+                          <button
+                            onClick={() => {
+                              setCalorieDraft(String(ingredient.caloriesOverride));
+                              setCalorieEditId(ingredient.id);
+                            }}
+                            className="mt-1.5 shrink-0 text-[11px] text-muted underline decoration-rule underline-offset-2 hover:text-ink"
+                          >
+                            {ingredient.caloriesOverride} cal
+                          </button>
+                        ) : (
+                          canAddCalories && (
+                            <button
+                              onClick={() => {
+                                setCalorieDraft("");
+                                setCalorieEditId(ingredient.id);
+                              }}
+                              className="mt-1.5 flex shrink-0 items-center gap-0.5 text-[11px] text-accent hover:underline"
+                            >
+                              <Plus size={11} />
+                              calories
+                            </button>
+                          )
+                        )}
+                      </div>
                     </li>
                   );
                 })}
               </ul>
             )}
           </div>
-
-          <NutritionPanel macros={macros} isEstimated={isEstimated} />
         </aside>
 
         <MethodBlock
@@ -341,6 +437,10 @@ export function RecipeView({
         photos={recipe.photos}
         uploadsEnabled={uploadsEnabled}
       />
+
+      <div className="mt-8 max-w-sm">
+        <NutritionPanel macros={macros} isEstimated={isEstimated} />
+      </div>
     </article>
   );
 }

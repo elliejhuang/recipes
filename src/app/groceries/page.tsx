@@ -8,5 +8,10 @@ export default async function GroceriesPage() {
   await ensureAutoList();
   const lists = await getGroceryLists();
 
-  return <GroceryLists lists={lists} />;
+  return (
+    <div>
+      <h1 className="mb-4 font-serif text-2xl font-semibold">Groceries</h1>
+      <GroceryLists lists={lists} />
+    </div>
+  );
 }

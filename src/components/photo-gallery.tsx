@@ -77,10 +77,7 @@ export function PhotoGallery({
           setDragOver(false);
           upload(e.dataTransfer.files);
         }}
-        className={clsx(
-          "rounded-xl border p-3 transition-colors",
-          dragOver ? "border-accent bg-accent-soft" : "border-rule bg-card",
-        )}
+        className={clsx("rounded-xl transition-colors", dragOver && "bg-accent-soft")}
       >
         <div className="grid grid-cols-3 gap-2 sm:grid-cols-4 md:grid-cols-5">
           {photos.map((photo) => (

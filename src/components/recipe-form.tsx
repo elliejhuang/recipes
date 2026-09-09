@@ -1,8 +1,8 @@
 "use client";
 
-import { useMemo, useState, useTransition } from "react";
+import { useEffect, useMemo, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { Camera, Loader2, Sparkles, Trash2 } from "lucide-react";
+import { ImagePlus, Loader2, Sparkles, Trash2, X } from "lucide-react";
 import { clsx } from "clsx";
 import { deleteRecipe, saveRecipe, type RecipeInput } from "@/lib/actions";
 import { estimateMacros, type Macros } from "@/lib/nutrition";
@@ -26,15 +26,30 @@ export function RecipeForm({
   initial,
   submitLabel,
   showDelete = false,
+  uploadsEnabled = false,
 }: {
   initial: FormValues;
   submitLabel: string;
   showDelete?: boolean;
+  /** Whether Supabase storage is configured, so photos can be attached now. */
+  uploadsEnabled?: boolean;
 }) {
   const router = useRouter();
   const [values, setValues] = useState<FormValues>(initial);
   const [pending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
+  const [stagedPhotos, setStagedPhotos] = useState<File[]>([]);
+  const photoInputRef = useRef<HTMLInputElement>(null);
+
+  // Object URLs for the staged files, torn down as files are added/removed/
+  // unmounted so previews don't leak memory.
+  const photoPreviews = useMemo(
+    () => stagedPhotos.map((file) => URL.createObjectURL(file)),
+    [stagedPhotos],
+  );
+  useEffect(() => {
+    return () => photoPreviews.forEach((url) => URL.revokeObjectURL(url));
+  }, [photoPreviews]);
 
   const set = <K extends keyof FormValues>(key: K, value: FormValues[K]) =>
     setValues((v) => ({ ...v, [key]: value }));
@@ -81,6 +96,16 @@ export function RecipeForm({
     startTransition(async () => {
       try {
         const id = await saveRecipe({ ...values, ingredientLines: lines });
+
+        if (stagedPhotos.length) {
+          const form = new FormData();
+          form.set("recipeId", String(id));
+          for (const file of stagedPhotos) form.append("files", file);
+          // Best-effort: the recipe is already saved, and any photo that
+          // doesn't make it here can still be added from its own page.
+          await fetch("/api/photos", { method: "POST", body: form }).catch(() => {});
+        }
+
         router.push(`/recipes/${id}`);
       } catch (e) {
         setError(e instanceof Error ? e.message : "Couldn't save that.");
@@ -253,12 +278,64 @@ export function RecipeForm({
           )}
         </div>
 
-        <p className="flex items-start gap-1.5 text-[11px] leading-snug text-faint">
-          <Camera size={12} className="mt-0.5 shrink-0" />
-          {values.id
-            ? "Photos live on the recipe page — save, and you'll land back there."
-            : "Save first, then you can add your own photos on the recipe page."}
-        </p>
+        <div>
+          <div className="flex items-baseline justify-between">
+            <label className="label">Photos</label>
+            {!uploadsEnabled && (
+              <span className="mb-1.5 text-[11px] text-faint">not configured</span>
+            )}
+          </div>
+
+          {uploadsEnabled ? (
+            <div className="grid grid-cols-4 gap-2">
+              {stagedPhotos.map((file, index) => (
+                <div key={index} className="group relative aspect-square overflow-hidden rounded-lg bg-paper">
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img
+                    src={photoPreviews[index]}
+                    alt=""
+                    className="h-full w-full object-cover"
+                  />
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setStagedPhotos((files) => files.filter((_, i) => i !== index))
+                    }
+                    aria-label={`Remove ${file.name}`}
+                    className="absolute top-1 right-1 rounded-full bg-black/50 p-0.5 text-white opacity-0 backdrop-blur transition-opacity group-hover:opacity-100"
+                  >
+                    <X size={12} />
+                  </button>
+                </div>
+              ))}
+
+              <button
+                type="button"
+                onClick={() => photoInputRef.current?.click()}
+                className="flex aspect-square flex-col items-center justify-center gap-1 rounded-lg border border-dashed border-rule text-muted hover:border-accent hover:text-accent"
+              >
+                <ImagePlus size={16} />
+                <span className="text-[10px]">Add</span>
+              </button>
+            </div>
+          ) : (
+            <p className="text-[11px] leading-snug text-faint">
+              Photo uploads need Supabase storage keys in <code>.env.local</code>.
+            </p>
+          )}
+
+          <input
+            ref={photoInputRef}
+            type="file"
+            accept="image/*"
+            multiple
+            hidden
+            onChange={(e) => {
+              if (e.target.files) setStagedPhotos((f) => [...f, ...Array.from(e.target.files!)]);
+              e.target.value = "";
+            }}
+          />
+        </div>
 
         {error && (
           <p className="rounded-lg bg-accent-soft px-3 py-2 text-xs text-accent">

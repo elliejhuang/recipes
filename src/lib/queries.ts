@@ -152,10 +152,12 @@ export async function listLists(): Promise<ListWithCount[]> {
 }
 
 /** Lists with a few images each, for the album tiles. */
-export async function listAlbums(): Promise<(ListWithCount & { covers: string[] })[]> {
+export async function listAlbums(options?: {
+  search?: string;
+}): Promise<(ListWithCount & { covers: string[] })[]> {
   const cover = coverPhotoQuery();
 
-  const [listRows, members] = await Promise.all([
+  const [allLists, members] = await Promise.all([
     listLists(),
     db
       .select({
@@ -167,6 +169,11 @@ export async function listAlbums(): Promise<(ListWithCount & { covers: string[] 
       .leftJoin(cover, eq(cover.recipeId, recipes.id))
       .orderBy(desc(recipes.createdAt)),
   ]);
+
+  const term = options?.search?.trim().toLowerCase();
+  const listRows = term
+    ? allLists.filter((l) => l.name.toLowerCase().includes(term))
+    : allLists;
 
   return listRows.map((list) => ({
     ...list,
