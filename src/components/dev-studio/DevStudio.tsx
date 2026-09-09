@@ -50,6 +50,8 @@ const DOCK_BELOW_PX = 640;
 
 const POPOVER_POS_KEY = "devstudio:popover-pos";
 const RESET_MS = 1500;
+const BAR_POS_KEY = "devstudio:barpos";
+const BP_POS_KEY = "devstudio:bppos";
 
 /**
  * Type only. The layout sliders (padding, gap, margin) came out: a single
@@ -65,7 +67,7 @@ type StyleProperty = "fontSize" | "fontWeight" | "letterSpacing" | "lineHeight";
  * from a fixed list rather than a number — but it reverts and records into the
  * brief exactly like the sliders, so it shares their machinery.
  */
-type TypeProperty = StyleProperty | "fontFamily";
+type TypeProperty = StyleProperty | "fontFamily" | "scale";
 
 const STYLE_PROPERTIES: StyleProperty[] = [
   "fontSize",
@@ -80,9 +82,40 @@ const PROP_LABEL: Record<TypeProperty, string> = {
   fontWeight: "font-weight",
   letterSpacing: "letter-spacing",
   lineHeight: "line-height",
+  scale: "scale",
 };
 
-const WRITE_PROP: Record<TypeProperty, string> = PROP_LABEL;
+/** What each property is actually written as. Scale writes several — see below. */
+const WRITE_PROP: Record<StyleProperty | "fontFamily", string> = PROP_LABEL;
+
+/**
+ * "Is this the right size?" is the most common note on a photo, and until now
+ * it could only be written in prose — "make this a bit bigger" — which meant
+ * guessing, and then finding out on the next reload.
+ *
+ * Written as an explicit width in px, measured off the element at pick time.
+ * Two more obvious mechanisms are both wrong:
+ *
+ * `transform: scale()` is painted, not laid out — the element would overlap
+ * its neighbours at 2x and leave a hole at 0.5x, so the preview answers a
+ * different question from the one being asked.
+ *
+ * `zoom` reflows, which is why it was tried first, but it scales *lengths*
+ * and leaves percentages alone — a lot of this app's imagery is `width: 100%`
+ * of its own box, which resolves the percentage against a containing block
+ * that had already been rescaled and cancels itself out.
+ *
+ * A px width is what the layout actually does, so what's previewed is the
+ * change that would be committed.
+ *
+ * Unlike the type sliders this is offered for any element, not only one with
+ * text of its own — a photo is exactly the thing whose size is in question,
+ * and it has no direct text.
+ */
+const SCALE_STEPS = [0.25, 0.5, 1, 2, 3] as const;
+
+/** Everything a scale preview writes, so reverting can clear all of it. */
+const SCALE_WRITES = ["width", "max-width", "height", "margin-inline"];
 
 /**
  * The families the site actually loads — every one is @import-ed in
@@ -222,6 +255,14 @@ interface PopoverPos {
   left: number;
 }
 
+/** A rendered comment marker: the annotation's id/label plus the live rect of
+ *  the element it currently resolves to, refreshed on scroll/resize. */
+interface MarkerPos {
+  id: string;
+  text: string;
+  rect: Rect;
+}
+
 interface Locator {
   tag: string;
   classes: string[];
@@ -333,6 +374,42 @@ function buildLocator(el: HTMLElement): Locator {
     classes,
     textExcerpt: siblingIndex !== null ? `${textExcerpt} [#${siblingIndex + 1}]` : textExcerpt,
   };
+}
+
+/**
+ * The inverse of buildLocator: given a saved Locator, find the live element on
+ * the current page it refers to. Reuses buildLocator's own tag+classes
+ * selector and locatorKey's string comparison — the same machinery that
+ * decides whether a freshly-picked element already has notes — rather than
+ * inventing a second, possibly-inconsistent way to recognise "the same
+ * element." Returns null if nothing on the page matches (e.g. the markup
+ * changed since the note was saved).
+ *
+ * Deliberately scoped to the real page (`document`), not the breakpoint
+ * preview's iframe — markers are for orienting on the page you're actually
+ * looking at, and toggling them while a preview is open isn't a case this
+ * needs to cover.
+ */
+function findElementForLocator(locator: Locator, page: string): HTMLElement | null {
+  const selector = locator.classes.length
+    ? `${locator.tag}.${locator.classes.join(".")}`
+    : locator.tag;
+  const key = locatorKey(locator, page);
+  try {
+    const candidates = Array.from(document.querySelectorAll<HTMLElement>(selector));
+    return candidates.find((el) => locatorKey(buildLocator(el), page) === key) ?? null;
+  } catch {
+    // invalid/unsupported selector -- no marker for this annotation
+    return null;
+  }
+}
+
+/** What a marker's floating card says. Mirrors the fallback text already used
+ *  when listing existing notes on the focused element, truncated since these
+ *  cards sit on the page rather than in a scrollable list. */
+function markerLabel(a: Annotation): string {
+  const text = a.comment || (a.tagChange ? `element → <${a.tagChange.to}>` : "type change only");
+  return text.length > 70 ? `${text.slice(0, 67)}...` : text;
 }
 
 /**
@@ -451,6 +528,7 @@ export default function DevStudio() {
   const [values, setValues] = useState<Partial<Record<StyleProperty, number>>>({});
   const [ranges, setRanges] = useState<Partial<Record<StyleProperty, Range>>>({});
   const [fontToken, setFontToken] = useState("");
+  const [scale, setScale] = useState(1);
   const [elementTag, setElementTag] = useState("");
   const [comment, setComment] = useState("");
   const [showType, setShowType] = useState(false);
@@ -459,6 +537,137 @@ export default function DevStudio() {
   const [copyStatus, setCopyStatus] = useState<"idle" | "copied" | "failed">("idle");
   const [frameScale, setFrameScale] = useState(1);
   const [popoverPos, setPopoverPos] = useState<PopoverPos | null>(null);
+  /** "C" toggles this on/off; see the keydown effect below. */
+  const [showMarkers, setShowMarkers] = useState(false);
+  const [markers, setMarkers] = useState<MarkerPos[]>([]);
+
+  /**
+   * Where the toolbar has been dragged to, as an offset from the bottom-right
+   * corner it starts in. Kept as an offset rather than as coordinates so the
+   * bar stays anchored to that corner when the window resizes.
+   *
+   * Persisted, because the position is a working preference — having to shove
+   * the bar out of the way again on every reload is exactly the annoyance
+   * this is meant to remove.
+   */
+  const [barOffset, setBarOffset] = useState({ x: 0, y: 0 });
+  /** Same idea for the breakpoint switcher in the opposite corner. */
+  const [bpOffset, setBpOffset] = useState({ x: 0, y: 0 });
+
+  /** Minimum gap kept between a dragged bar and the true window edge. */
+  const DRAG_MARGIN = 12;
+
+  /**
+   * Keeps a bar's whole rect on screen, not just some sliver of it — the grip
+   * that starts a drag sits at one end of the bar, and clamping only enough to
+   * keep the grip itself reachable left the mode buttons and Notes hanging
+   * off the edge past it, reachable to look at but not to click. `baseLeft`/
+   * `baseTop` are the bar's un-translated position (its rect minus whatever
+   * offset is already applied) — fixed for the life of one drag, so clamping
+   * a mid-drag candidate doesn't feed back on itself the way re-measuring the
+   * (already translated) live rect on every move would.
+   */
+  const clampBarOffset = (
+    x: number,
+    y: number,
+    baseLeft: number,
+    baseTop: number,
+    width: number,
+    height: number,
+  ) => ({
+    x: Math.min(
+      Math.max(x, DRAG_MARGIN - baseLeft),
+      Math.max(DRAG_MARGIN - baseLeft, window.innerWidth - width - DRAG_MARGIN - baseLeft),
+    ),
+    y: Math.min(
+      Math.max(y, DRAG_MARGIN - baseTop),
+      Math.max(DRAG_MARGIN - baseTop, window.innerHeight - height - DRAG_MARGIN - baseTop),
+    ),
+  });
+
+  /**
+   * Shared drag. Pointer capture with listeners on the handle itself, so a
+   * fast drag that outruns the cursor keeps sending moves here instead of
+   * dropping the bar the moment the pointer leaves it.
+   */
+  const startDrag = (
+    event: ReactPointerEvent<HTMLElement>,
+    from: { x: number; y: number },
+    set: (pos: { x: number; y: number }) => void,
+    storeKey: string,
+  ) => {
+    const grip = event.currentTarget;
+    grip.setPointerCapture(event.pointerId);
+    const startX = event.clientX;
+    const startY = event.clientY;
+    const origin = { ...from };
+
+    // The whole bar, not just the grip — clamping is against the bar's own
+    // footprint. Without it, an untethered drag (a wild real one, or an
+    // automated testing click that registered as a big pointer delta) could
+    // carry the bar's offset to some enormous value with nothing to stop it,
+    // and once saved there was no way back into the tool short of editing
+    // storage by hand. One bad save, from any tab, corrupts it for every tab
+    // on the origin — localStorage isn't per-tab.
+    const bar = grip.parentElement;
+    const barRect = bar?.getBoundingClientRect();
+    const baseLeft = (barRect?.left ?? 0) - origin.x;
+    const baseTop = (barRect?.top ?? 0) - origin.y;
+    const width = barRect?.width ?? 0;
+    const height = barRect?.height ?? 0;
+
+    const resolve = (e: PointerEvent) =>
+      clampBarOffset(
+        origin.x + (e.clientX - startX),
+        origin.y + (e.clientY - startY),
+        baseLeft,
+        baseTop,
+        width,
+        height,
+      );
+
+    const move = (e: PointerEvent) => set(resolve(e));
+
+    const up = (e: PointerEvent) => {
+      grip.removeEventListener("pointermove", move);
+      grip.removeEventListener("pointerup", up);
+      const pos = resolve(e);
+      try {
+        localStorage.setItem(storeKey, JSON.stringify(pos));
+      } catch {
+        // Not being able to remember it is no reason to refuse the move.
+      }
+    };
+
+    grip.addEventListener("pointermove", move);
+    grip.addEventListener("pointerup", up);
+  };
+
+  useEffect(() => {
+    // Restores at {x:0,y:0} on this first render, so `.getBoundingClientRect()`
+    // read right now reflects each bar's plain, un-translated anchor position —
+    // exactly the `baseLeft`/`baseTop` clampBarOffset expects.
+    const bar = document.querySelector<HTMLElement>(".devstudio__bar")?.getBoundingClientRect();
+    const bpBar = document.querySelector<HTMLElement>(".devstudio__bp-bar")?.getBoundingClientRect();
+    try {
+      const raw = localStorage.getItem(BAR_POS_KEY);
+      if (raw && bar) {
+        const saved = JSON.parse(raw);
+        // Clamped on read, not just on the next drag — a position already
+        // saved off-screen needs pulling back in on its own, not left
+        // stranded until someone drags it again from a bar they can no
+        // longer see or reach.
+        setBarOffset(clampBarOffset(saved.x, saved.y, bar.left, bar.top, bar.width, bar.height));
+      }
+      const rawBp = localStorage.getItem(BP_POS_KEY);
+      if (rawBp && bpBar) {
+        const saved = JSON.parse(rawBp);
+        setBpOffset(clampBarOffset(saved.x, saved.y, bpBar.left, bpBar.top, bpBar.width, bpBar.height));
+      }
+    } catch {
+      // A malformed or blocked store just means the bars open where they always did.
+    }
+  }, []);
 
   const baselineRef = useRef<Partial<Record<TypeProperty, string>>>({});
   /** The tag the element had in the source, so a swap can always be undone. */
@@ -470,6 +679,12 @@ export default function DevStudio() {
    * change. Captured once, used for both saving and matching existing notes.
    */
   const pickedLocatorRef = useRef<Locator | null>(null);
+  /**
+   * The element's own rendered width at pick time. Every step is a multiple of
+   * this rather than of whatever the last step left behind, so 0.5x then 2x
+   * lands back where it started instead of compounding to 1x of a shrunken box.
+   */
+  const baseWidthRef = useRef(0);
   const copyTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
   const commentRef = useRef<HTMLTextAreaElement>(null);
   const popoverRef = useRef<HTMLDivElement>(null);
@@ -479,6 +694,10 @@ export default function DevStudio() {
   // its contentDocument know to re-run against the fresh Document — the old
   // one, and every listener on it, is gone once the frame reloads.
   const [frameLoadTick, setFrameLoadTick] = useState(0);
+  /** Elements matched for the current marker pass. Held in a ref rather than
+   *  state because scroll/resize only needs fresh rects off these, not a
+   *  fresh DOM search every frame. */
+  const markerTargetsRef = useRef<{ id: string; text: string; el: HTMLElement }[]>([]);
 
   useEffect(() => {
     setAnnotations(loadAnnotations());
@@ -537,7 +756,10 @@ export default function DevStudio() {
 
   /** Undo both the inline style edits and any tag swap, in that order. */
   const revertUnsavedEdits = useCallback((el: HTMLElement, touched: Set<TypeProperty>) => {
-    touched.forEach((prop) => el.style.removeProperty(WRITE_PROP[prop]));
+    touched.forEach((prop) => {
+      if (prop === "scale") SCALE_WRITES.forEach((css) => el.style.removeProperty(css));
+      else el.style.removeProperty(WRITE_PROP[prop]);
+    });
     const original = originalTagRef.current;
     if (original && tagOf(el) !== original) swapTag(el, original);
   }, []);
@@ -549,6 +771,7 @@ export default function DevStudio() {
     setValues({});
     setRanges({});
     setFontToken("");
+    setScale(1);
     setElementTag("");
     setComment("");
     setShowType(false);
@@ -573,14 +796,17 @@ export default function DevStudio() {
         initialRanges[prop] = rangeFor(prop, iv);
       });
       baseline.fontFamily = describeFontFamily(el);
+      baseline.scale = "1x";
 
       baselineRef.current = baseline;
       originalTagRef.current = tagOf(el);
       pickedLocatorRef.current = buildLocator(el);
+      baseWidthRef.current = el.getBoundingClientRect().width;
       setTouchedProps(new Set());
       setValues(initialValues);
       setRanges(initialRanges);
       setFontToken("");
+      setScale(1);
       setElementTag(tagOf(el));
       // Always a blank note. Previous notes on this element render above it as
       // their own entries rather than being loaded in for editing.
@@ -613,22 +839,24 @@ export default function DevStudio() {
       pickElement(el);
     };
 
-    document.addEventListener("mousemove", handleMove, true);
-    document.addEventListener("click", handleClick, true);
+    // The same picker, wired to the framed preview's own document too — not
+    // instead of the top-level one. A click inside an iframe never reaches
+    // the parent document's listeners; it's a separate document entirely, so
+    // without this the preview would be unannotatable the moment a
+    // breakpoint is open.
+    const docs = [document];
+    const frameDoc = breakpoint ? iframeRef.current?.contentDocument : null;
+    if (frameDoc) docs.push(frameDoc);
 
-    // The same picker, wired to the framed preview's own document too. A
-    // click inside an iframe never reaches the parent document's listeners —
-    // it's a separate document entirely — so without this the preview would
-    // be unannotatable the moment a breakpoint is open.
-    const frameDoc = iframeRef.current?.contentDocument;
-    frameDoc?.addEventListener("mousemove", handleMove, true);
-    frameDoc?.addEventListener("click", handleClick, true);
-
+    docs.forEach((doc) => {
+      doc.addEventListener("mousemove", handleMove, true);
+      doc.addEventListener("click", handleClick, true);
+    });
     return () => {
-      document.removeEventListener("mousemove", handleMove, true);
-      document.removeEventListener("click", handleClick, true);
-      frameDoc?.removeEventListener("mousemove", handleMove, true);
-      frameDoc?.removeEventListener("click", handleClick, true);
+      docs.forEach((doc) => {
+        doc.removeEventListener("mousemove", handleMove, true);
+        doc.removeEventListener("click", handleClick, true);
+      });
     };
   }, [mode, pickElement, getRect, breakpoint, frameLoadTick]);
 
@@ -700,11 +928,117 @@ export default function DevStudio() {
     return () => window.removeEventListener("keydown", onKey);
   });
 
+  /**
+   * "C" toggles comment markers on/off, in any mode. Guarded against typing —
+   * without the activeElement check, typing a note that happens to contain
+   * "c" would fight the popover's own textarea every keystroke.
+   */
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key.toLowerCase() !== "c" || e.ctrlKey || e.metaKey || e.altKey) return;
+      const active = document.activeElement;
+      const isTyping =
+        active instanceof HTMLElement &&
+        (active.tagName === "INPUT" || active.tagName === "TEXTAREA" || active.isContentEditable);
+      if (isTyping) return;
+      setShowMarkers((v) => !v);
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, []);
+
+  /**
+   * Re-find every current-page annotation's element while markers are shown,
+   * then keep their rects live on scroll/resize (rAF-throttled — a dev tool,
+   * so this favours simplicity over a "did the rect actually change" check).
+   * The DOM search itself only re-runs when markers are toggled on or the
+   * annotation list changes, not on every scroll tick.
+   */
+  useEffect(() => {
+    // No state to clear here: rendering already gates on showMarkers, so a
+    // stale `markers` array sitting unused in state is harmless, and this
+    // keeps the reset out of the effect body directly (see `update` below).
+    if (!showMarkers) {
+      markerTargetsRef.current = [];
+      return;
+    }
+
+    const page = window.location.pathname;
+    markerTargetsRef.current = annotations
+      .filter((a) => a.page === page)
+      .map((a) => {
+        const el = findElementForLocator(a.locator, page);
+        return el ? { id: a.id, text: markerLabel(a), el } : null;
+      })
+      .filter((m): m is { id: string; text: string; el: HTMLElement } => m !== null);
+
+    let raf = 0;
+    const update = () => {
+      setMarkers(
+        markerTargetsRef.current.map((m) => ({
+          id: m.id,
+          text: m.text,
+          rect: getRect(m.el),
+        }))
+      );
+    };
+    update();
+
+    const onScrollOrResize = () => {
+      if (raf) return;
+      raf = requestAnimationFrame(() => {
+        raf = 0;
+        update();
+      });
+    };
+
+    window.addEventListener("scroll", onScrollOrResize, { passive: true, capture: true });
+    window.addEventListener("resize", onScrollOrResize);
+    return () => {
+      if (raf) cancelAnimationFrame(raf);
+      window.removeEventListener("scroll", onScrollOrResize, true);
+      window.removeEventListener("resize", onScrollOrResize);
+    };
+  }, [showMarkers, annotations, getRect]);
+
   const handleSliderChange = (prop: StyleProperty, value: number) => {
     if (!focusedEl) return;
     setTouchedProps((prev) => new Set(prev).add(prop));
     applyValue(focusedEl, prop, value);
     setValues((v) => ({ ...v, [prop]: value }));
+  };
+
+  /**
+   * 1x is the way back out rather than a value in its own right: it removes
+   * the inline zoom and drops the property from the note, so tapping through
+   * the steps and landing back on 1x leaves no trace, the same as never
+   * having touched it.
+   */
+  const handleScaleChange = (value: number) => {
+    if (!focusedEl) return;
+    setScale(value);
+    if (value === 1) {
+      SCALE_WRITES.forEach((css) => focusedEl.style.removeProperty(css));
+      setTouchedProps((prev) => {
+        const next = new Set(prev);
+        next.delete("scale");
+        return next;
+      });
+      return;
+    }
+    const width = baseWidthRef.current * value;
+    focusedEl.style.width = `${Math.round(width)}px`;
+    // Beats a stylesheet's own cap — an image at width:100% with a max-height,
+    // or an auto-width block; without this a 2x preview is silently clipped
+    // back to its column.
+    focusedEl.style.maxWidth = "none";
+    // Images and figures often carry an explicit height, so the ratio has to
+    // be handed back to the width.
+    focusedEl.style.height = "auto";
+    // Centred on what it leaves behind, so a shrunk element doesn't range
+    // left of everything else on the page and read as a different change.
+    focusedEl.style.marginInline = "auto";
+    setTouchedProps((prev) => new Set(prev).add("scale"));
   };
 
   /**
@@ -826,6 +1160,9 @@ export default function DevStudio() {
           after: fontToken,
         };
       }
+      if (prop === "scale") {
+        return { property: prop, before: "1x", after: `${scale}x` };
+      }
       return {
         property: prop,
         before: baselineRef.current[prop] ?? formatValue(prop, readInitialValue(focusedEl, prop)),
@@ -907,10 +1244,43 @@ export default function DevStudio() {
 
   const activeFrame = BREAKPOINTS.find((b) => b.id === breakpoint) ?? null;
 
+  // Dot at the element's top-left corner; label offset to the side and
+  // clamped so it can't run off whichever edge the element is near.
+  const markerLayout = markers.map((m) => {
+    const dotX = m.rect.left;
+    const dotY = m.rect.top;
+    const labelX = Math.min(dotX + 18, window.innerWidth - 210);
+    const labelY = Math.min(Math.max(dotY, 8), window.innerHeight - 50);
+    return { ...m, dotX, dotY, labelX, labelY };
+  });
+
   return (
     <div data-devstudio-ui className="devstudio">
       {/* ---- Toolbar ---------------------------------------------------- */}
-      <div className="devstudio__bar">
+      <div
+        className="devstudio__bar"
+        style={{ translate: `${barOffset.x}px ${barOffset.y}px` }}
+      >
+        {/* The grip. Dragging is on a handle rather than the whole bar because
+            every other thing in here is a control — a drag started on a
+            button would either move the bar or fire the button, and
+            whichever one you picked would be wrong half the time. */}
+        <button
+          type="button"
+          className="devstudio__grip"
+          aria-label="Move the studio toolbar"
+          onPointerDown={(event) => startDrag(event, barOffset, setBarOffset, BAR_POS_KEY)}
+        >
+          <svg viewBox="0 0 16 16" fill="none" aria-hidden="true">
+            <circle cx="6" cy="4" r="1.35" fill="currentColor" />
+            <circle cx="10" cy="4" r="1.35" fill="currentColor" />
+            <circle cx="6" cy="8" r="1.35" fill="currentColor" />
+            <circle cx="10" cy="8" r="1.35" fill="currentColor" />
+            <circle cx="6" cy="12" r="1.35" fill="currentColor" />
+            <circle cx="10" cy="12" r="1.35" fill="currentColor" />
+          </svg>
+        </button>
+
         <div className="devstudio__modes" role="group" aria-label="Studio mode">
           <button
             type="button"
@@ -951,7 +1321,27 @@ export default function DevStudio() {
           Shown in Annotate too once a preview is already open, so switching
           device sizes doesn't require bouncing back to View first. */}
       {(mode === "view" || breakpoint) && (
-        <div className="devstudio__bp-bar" role="group" aria-label="Preview width">
+        <div
+          className="devstudio__bp-bar"
+          role="group"
+          aria-label="Preview width"
+          style={{ translate: `${bpOffset.x}px ${bpOffset.y}px` }}
+        >
+          <button
+            type="button"
+            className="devstudio__grip"
+            aria-label="Move the breakpoint switcher"
+            onPointerDown={(event) => startDrag(event, bpOffset, setBpOffset, BP_POS_KEY)}
+          >
+            <svg viewBox="0 0 16 16" fill="none" aria-hidden="true">
+              <circle cx="6" cy="4" r="1.35" fill="currentColor" />
+              <circle cx="10" cy="4" r="1.35" fill="currentColor" />
+              <circle cx="6" cy="8" r="1.35" fill="currentColor" />
+              <circle cx="10" cy="8" r="1.35" fill="currentColor" />
+              <circle cx="6" cy="12" r="1.35" fill="currentColor" />
+              <circle cx="10" cy="12" r="1.35" fill="currentColor" />
+            </svg>
+          </button>
           {BREAKPOINTS.map((bp) => (
             <button
               key={bp.id}
@@ -1123,6 +1513,26 @@ export default function DevStudio() {
               Save note
             </button>
 
+            {/* Outside the type block and ungated: the elements whose size is
+                usually wrong are photos and figures, which have no text of
+                their own and so never see the sliders. */}
+            <div className="devstudio__scale">
+              <span className="devstudio__scale-label">scale</span>
+              <div className="devstudio__scale-steps">
+                {SCALE_STEPS.map((step) => (
+                  <button
+                    key={step}
+                    type="button"
+                    className={step === scale ? "is-on" : undefined}
+                    aria-pressed={step === scale}
+                    onClick={() => handleScaleChange(step)}
+                  >
+                    {step}x
+                  </button>
+                ))}
+              </div>
+            </div>
+
             {hasOwnText(focusedEl) &&
               (showType ? (
                 <div className="devstudio__sliders">
@@ -1220,9 +1630,35 @@ export default function DevStudio() {
         </>
       )}
 
+      {/* ---- Comment markers ---------------------------------------------
+          Toggled by "C" (see the keydown effect above). One dot+line+label
+          per annotation on the current page whose element is still findable. */}
+      {showMarkers && markerLayout.length > 0 && (
+        <div className="devstudio__markers">
+          <svg className="devstudio__markers-svg">
+            {markerLayout.map((m) => (
+              <line key={m.id} x1={m.dotX} y1={m.dotY} x2={m.labelX} y2={m.labelY + 10} />
+            ))}
+          </svg>
+          {markerLayout.map((m) => (
+            <div key={m.id}>
+              <div className="devstudio__marker-dot" style={{ top: m.dotY, left: m.dotX }} />
+              <div className="devstudio__marker-label" style={{ top: m.labelY, left: m.labelX }}>
+                {m.text}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
       {/* ---- Notes tray -------------------------------------------------- */}
+      {/* The tray travels with the bar. It is a sibling, not a child, so it
+          cannot inherit the transform and is given the same offset directly. */}
       {isTrayOpen && (
-        <div className="devstudio__tray">
+        <div
+          className="devstudio__tray"
+          style={{ translate: `${barOffset.x}px ${barOffset.y}px` }}
+        >
           <div className="devstudio__tray-header">
             <h2>Studio notes</h2>
             <button type="button" onClick={() => setTrayOpen(false)} aria-label="Close">

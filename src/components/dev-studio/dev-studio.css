@@ -114,6 +114,89 @@
   color: #fff;
 }
 
+/* ---- Drag handle --------------------------------------------------------
+   The one part of each bar that is not a control. touch-action: none stops
+   the browser claiming the gesture as a scroll before the pointer handler
+   ever sees it, which on a trackpad made the bar jump and then stick. */
+.devstudio__grip {
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 28px;
+  flex-shrink: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: rgba(0, 0, 0, 0.3);
+  cursor: grab;
+  touch-action: none;
+}
+
+.devstudio__grip:active {
+  cursor: grabbing;
+  color: rgba(0, 0, 0, 0.55);
+}
+
+.devstudio__grip svg {
+  width: 16px;
+  height: 16px;
+}
+
+/* ---- Comment markers ----------------------------------------------------
+   Toggled by "C". Dot at the element's corner, a dashed line out to a small
+   floating card with the comment text. Everything here is pointer-events:none
+   — the markers sit on top of the page but must never intercept a click that
+   would otherwise pick an element or interact with the site underneath. Uses
+   the same blue accent as the highlight box and active states elsewhere in
+   this file, for the same reason: it's the one color this overlay already
+   reserves for "here's what DevStudio is pointing at." */
+.devstudio__markers {
+  position: fixed;
+  inset: 0;
+  z-index: 1;
+  pointer-events: none;
+}
+
+.devstudio__markers-svg {
+  position: fixed;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+}
+
+.devstudio__markers-svg line {
+  stroke: #0099ff;
+  stroke-width: 1.5;
+  stroke-dasharray: 3 3;
+}
+
+.devstudio__marker-dot {
+  position: fixed;
+  width: 8px;
+  height: 8px;
+  margin: -4px 0 0 -4px;
+  background: #0099ff;
+  border: 2px solid #fff;
+  border-radius: 50%;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.35);
+  pointer-events: none;
+}
+
+.devstudio__marker-label {
+  position: fixed;
+  max-width: 200px;
+  padding: 6px 8px;
+  background: rgba(255, 255, 255, 0.97);
+  border: 1px solid #0099ff;
+  border-radius: 6px;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.18);
+  font-size: 11px;
+  line-height: 1.35;
+  color: #1a1a1a;
+  pointer-events: none;
+}
+
 .devstudio__notes-btn {
   position: relative;
   padding: 6px 14px;
@@ -426,6 +509,63 @@
   cursor: not-allowed;
 }
 
+/* A row of fixed steps rather than a slider. Size notes are nearly always a
+   ratio you can name — half, double — and a continuous slider invites a value
+   like 0.43 that nobody would write into a stylesheet. Five steps produce five
+   readable instructions.
+
+   Sits above the type block and outside its "Adjust type" disclosure: a
+   figure or photo has no text of its own, so it never sees that block, and
+   it's exactly the kind of element whose size is usually in question. */
+.devstudio__scale {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid #e4e4e7;
+}
+
+.devstudio__scale-label {
+  font-size: 12px;
+  color: #444;
+}
+
+.devstudio__scale-steps {
+  display: flex;
+  gap: 4px;
+  margin-left: auto;
+}
+
+.devstudio__scale-steps button {
+  padding: 4px 8px;
+  font: inherit;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  color: #18181b;
+  background: #fff;
+  border: 1px solid #d0d0d0;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.devstudio__scale-steps button:hover {
+  border-color: #a1a1aa;
+}
+
+/* The current step, including 1x — which is the "off" position, so it reads as
+   selected rather than as an edit. */
+.devstudio__scale-steps button.is-on {
+  color: #fff;
+  background: #18181b;
+  border-color: #18181b;
+}
+
+.devstudio__scale-steps button:focus-visible {
+  outline: 2px solid #0099ff;
+  outline-offset: 1px;
+}
+
 
 /* A floating panel, not a full-height rail. Anchored to the viewport edges it
    ran straight over the bottom toolbar, so opening the notes hid the very
@@ -577,6 +717,13 @@
   .devstudio__mode,
   .devstudio__notes-btn {
     padding: 9px 14px;
+  }
+
+  /* The bar is already docked full-width and centered here, which is the
+     phone layout doing its job — dragging it somewhere else would only work
+     against that. */
+  .devstudio__grip {
+    display: none;
   }
 
   /* The note panel anchors under whatever you tapped, which on a narrow screen
