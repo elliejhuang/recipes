@@ -16,12 +16,24 @@ export const EMPTY_MACROS: Macros = {
   fatG: null, fiberG: null, sugarG: null, sodiumMg: null,
 };
 
+/** The fields a hand-entered override can fill in — everything the nutrition
+ *  panel shows except sodium, which isn't displayed anywhere in the app. */
+export type MacroOverride = Pick<
+  Macros,
+  "calories" | "proteinG" | "carbsG" | "fatG" | "fiberG" | "sugarG"
+>;
+
 export type EstimateInput = {
   quantity: number | null;
   unit: string | null;
   name: string | null;
-  /** Hand-entered calories for this line, used when there's no food match. */
-  caloriesOverride?: number | null;
+  /**
+   * Hand-entered nutrition for this line, used whenever there's no food
+   * match. Always the whole entry at once — a line's numbers are either
+   * fully estimated or fully typed in, never a merge of the two, so a round
+   * number never looks like a suspiciously precise measurement.
+   */
+  override?: MacroOverride | null;
 };
 
 export type Estimate = {
@@ -66,14 +78,30 @@ export function toGrams(input: EstimateInput): number | null {
   return null;
 }
 
+const round = (n: number, places = 0) => Math.round(n * 10 ** places) / 10 ** places;
+
 /**
- * True when an ingredient line has neither a food match nor a hand-entered
- * override, so the UI can offer to fill the gap.
+ * One ingredient's nutrition, as used in the recipe (the full line's
+ * quantity, not scaled to a serving) — null when there's no food match and
+ * no hand-entered override, which is the UI's cue to offer filling it in.
  */
-export function needsCalories(input: EstimateInput): boolean {
-  if (input.name === null || input.quantity === null) return false;
-  if (input.caloriesOverride != null) return false;
-  return !lookupFood(input.name) || toGrams(input) === null;
+export function estimateIngredientMacros(input: EstimateInput): Macros | null {
+  if (input.override) return { ...EMPTY_MACROS, ...input.override };
+
+  const grams = toGrams(input);
+  const food = input.name ? lookupFood(input.name) : null;
+  if (grams === null || !food) return null;
+
+  const factor = grams / 100;
+  return {
+    calories: round(food.kcal * factor),
+    proteinG: round(food.protein * factor, 1),
+    carbsG: round(food.carbs * factor, 1),
+    fatG: round(food.fat * factor, 1),
+    fiberG: round((food.fiber ?? 0) * factor, 1),
+    sugarG: round((food.sugar ?? 0) * factor, 1),
+    sodiumMg: round((food.sodium ?? 0) * factor),
+  };
 }
 
 /**
@@ -103,33 +131,23 @@ export function estimateMacros(
     if (ing.quantity === null) continue;
     countable++;
 
-    if (ing.caloriesOverride != null) {
-      totals.calories += ing.caloriesOverride;
-      matched++;
-      continue;
-    }
-
-    const grams = toGrams(ing);
-    const food = lookupFood(ing.name);
-    if (grams === null || !food) {
+    const line = estimateIngredientMacros(ing);
+    if (!line) {
       unmatched.push(ing.name);
       continue;
     }
 
-    const factor = grams / 100;
-    totals.calories += food.kcal * factor;
-    totals.proteinG += food.protein * factor;
-    totals.carbsG += food.carbs * factor;
-    totals.fatG += food.fat * factor;
-    totals.fiberG += (food.fiber ?? 0) * factor;
-    totals.sugarG += (food.sugar ?? 0) * factor;
-    totals.sodiumMg += (food.sodium ?? 0) * factor;
+    totals.calories += line.calories ?? 0;
+    totals.proteinG += line.proteinG ?? 0;
+    totals.carbsG += line.carbsG ?? 0;
+    totals.fatG += line.fatG ?? 0;
+    totals.fiberG += line.fiberG ?? 0;
+    totals.sugarG += line.sugarG ?? 0;
+    totals.sodiumMg += line.sodiumMg ?? 0;
     matched++;
   }
 
   const per = Math.max(1, servings);
-  const round = (n: number, places = 0) =>
-    Math.round(n * 10 ** places) / 10 ** places;
 
   return {
     perServing:

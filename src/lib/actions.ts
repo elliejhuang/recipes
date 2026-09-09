@@ -14,7 +14,7 @@ import {
   recipes,
 } from "@/db/schema";
 import { aggregateGroceries } from "./aggregate-groceries";
-import { estimateMacros } from "./nutrition";
+import { estimateMacros, type MacroOverride } from "./nutrition";
 import { parseIngredientLine } from "./parse-ingredient";
 import { ensureAutoList, getPlanIngredients } from "./queries";
 
@@ -48,17 +48,36 @@ export type RecipeInput = {
  * form, the import review screen, a paste. Parsing happens here so a recipe is
  * stored the same way no matter how it got in.
  */
+const OVERRIDE_COLUMNS = [
+  "caloriesOverride",
+  "proteinOverride",
+  "carbsOverride",
+  "fatOverride",
+  "fiberOverride",
+  "sugarOverride",
+] as const;
+
 async function writeIngredients(recipeId: number, lines: string[]) {
-  // A hand-entered calorie override lives on the ingredient row, but every
+  // A hand-entered nutrition override lives on the ingredient row, but every
   // save deletes and reinserts every row for the recipe. Carry overrides
   // forward by matching on the raw line text — exact rewordings lose the
   // override, but an untouched line keeps it.
   const previous = await db
-    .select({ raw: ingredients.raw, caloriesOverride: ingredients.caloriesOverride })
+    .select({
+      raw: ingredients.raw,
+      caloriesOverride: ingredients.caloriesOverride,
+      proteinOverride: ingredients.proteinOverride,
+      carbsOverride: ingredients.carbsOverride,
+      fatOverride: ingredients.fatOverride,
+      fiberOverride: ingredients.fiberOverride,
+      sugarOverride: ingredients.sugarOverride,
+    })
     .from(ingredients)
     .where(eq(ingredients.recipeId, recipeId));
   const overrideByRaw = new Map(
-    previous.filter((p) => p.caloriesOverride != null).map((p) => [p.raw, p.caloriesOverride]),
+    previous
+      .filter((p) => OVERRIDE_COLUMNS.some((col) => p[col] != null))
+      .map((p) => [p.raw, p]),
   );
 
   await db.delete(ingredients).where(eq(ingredients.recipeId, recipeId));
@@ -68,6 +87,7 @@ async function writeIngredients(recipeId: number, lines: string[]) {
     .filter(Boolean)
     .map((line, index) => {
       const parsed = parseIngredientLine(line);
+      const carried = overrideByRaw.get(parsed.raw);
       return {
         recipeId,
         position: index,
@@ -77,7 +97,12 @@ async function writeIngredients(recipeId: number, lines: string[]) {
         name: parsed.name,
         note: parsed.note,
         section: null,
-        caloriesOverride: overrideByRaw.get(parsed.raw) ?? null,
+        caloriesOverride: carried?.caloriesOverride ?? null,
+        proteinOverride: carried?.proteinOverride ?? null,
+        carbsOverride: carried?.carbsOverride ?? null,
+        fatOverride: carried?.fatOverride ?? null,
+        fiberOverride: carried?.fiberOverride ?? null,
+        sugarOverride: carried?.sugarOverride ?? null,
       };
     });
 
@@ -169,18 +194,26 @@ export async function updateRecipeField(
 }
 
 /**
- * Hand-entered calories for one ingredient line, for when the nutrition
+ * Hand-entered nutrition for one ingredient line, for when the nutrition
  * table has no match for it. Stored on the line itself so it feeds straight
- * back into the recipe's estimate.
+ * back into the recipe's estimate. Always the whole entry at once — passing
+ * null clears every field, reverting the line back to an estimate.
  */
-export async function setIngredientCalories(
+export async function setIngredientNutrition(
   ingredientId: number,
   recipeId: number,
-  calories: number | null,
+  macros: MacroOverride | null,
 ) {
   await db
     .update(ingredients)
-    .set({ caloriesOverride: calories })
+    .set({
+      caloriesOverride: macros?.calories ?? null,
+      proteinOverride: macros?.proteinG ?? null,
+      carbsOverride: macros?.carbsG ?? null,
+      fatOverride: macros?.fatG ?? null,
+      fiberOverride: macros?.fiberG ?? null,
+      sugarOverride: macros?.sugarG ?? null,
+    })
     .where(eq(ingredients.id, ingredientId));
   revalidatePath(`/recipes/${recipeId}`);
 }

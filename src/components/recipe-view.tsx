@@ -5,6 +5,8 @@ import { useRouter } from "next/navigation";
 import {
   ArrowLeft,
   Check,
+  ChevronDown,
+  ChevronRight,
   ExternalLink,
   Loader2,
   Minus,
@@ -14,8 +16,13 @@ import {
   X,
 } from "lucide-react";
 import { clsx } from "clsx";
-import { deleteRecipe, saveRecipe, setIngredientCalories } from "@/lib/actions";
-import { estimateMacros, needsCalories, type Macros } from "@/lib/nutrition";
+import { deleteRecipe, saveRecipe, setIngredientNutrition } from "@/lib/actions";
+import {
+  estimateIngredientMacros,
+  estimateMacros,
+  type MacroOverride,
+  type Macros,
+} from "@/lib/nutrition";
 import { parseIngredientLine } from "@/lib/parse-ingredient";
 import { formatMeasure } from "@/lib/units";
 import type { FullRecipe, ListWithCount } from "@/lib/queries";
@@ -70,10 +77,12 @@ export function RecipeView({
   const [viewServings, setViewServings] = useState(recipe.servings);
   const [ticked, setTicked] = useState<Set<number>>(new Set());
 
-  // Which ingredient's hand-entered calories are being edited, if any.
-  const [calorieEditId, setCalorieEditId] = useState<number | null>(null);
-  const [calorieDraft, setCalorieDraft] = useState("");
-  const [, startCaloriesTransition] = useTransition();
+  // Which ingredients have their nutrition facts open, and which one (if
+  // any) is showing the fill-in form rather than read-only facts.
+  const [expandedIds, setExpandedIds] = useState<Set<number>>(new Set());
+  const [nutritionEditId, setNutritionEditId] = useState<number | null>(null);
+  const [nutritionDraft, setNutritionDraft] = useState<Record<string, string>>({});
+  const [, startNutritionTransition] = useTransition();
 
   const scale = viewServings / Math.max(1, recipe.servings);
 
@@ -84,19 +93,55 @@ export function RecipeView({
     () =>
       lines.map((line, index) => {
         const p = parseIngredientLine(line);
-        return editing
-          ? p
-          : { ...p, caloriesOverride: recipe.ingredients[index]?.caloriesOverride ?? null };
+        if (editing) return p;
+        const ing = recipe.ingredients[index];
+        const override: MacroOverride | null =
+          ing?.caloriesOverride != null
+            ? {
+                calories: ing.caloriesOverride,
+                proteinG: ing.proteinOverride,
+                carbsG: ing.carbsOverride,
+                fatG: ing.fatOverride,
+                fiberG: ing.fiberOverride,
+                sugarG: ing.sugarOverride,
+              }
+            : null;
+        return { ...p, override };
       }),
     [lines, editing, recipe.ingredients],
   );
 
-  const saveCalories = (ingredientId: number) => {
-    const trimmed = calorieDraft.trim();
-    const value = trimmed === "" ? null : Number(trimmed);
-    setCalorieEditId(null);
-    startCaloriesTransition(async () => {
-      await setIngredientCalories(ingredientId, recipe.id, Number.isFinite(value as number) ? value : null);
+  const toggleExpanded = (id: number) =>
+    setExpandedIds((current) => {
+      const next = new Set(current);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+
+  const startNutritionEdit = (id: number, existing: MacroOverride | null) => {
+    setNutritionDraft(
+      Object.fromEntries(
+        NUTRIENTS.map(({ key }) => [key, existing?.[key] != null ? String(existing[key]) : ""]),
+      ),
+    );
+    setNutritionEditId(id);
+  };
+
+  const saveNutrition = (ingredientId: number) => {
+    const anyFilled = Object.values(nutritionDraft).some((v) => v.trim() !== "");
+    const macros: MacroOverride | null = anyFilled
+      ? (Object.fromEntries(
+          NUTRIENTS.map(({ key }) => {
+            const raw = nutritionDraft[key]?.trim();
+            const value = raw ? Number(raw) : null;
+            return [key, value !== null && Number.isFinite(value) ? value : null];
+          }),
+        ) as MacroOverride)
+      : null;
+    setNutritionEditId(null);
+    startNutritionTransition(async () => {
+      await setIngredientNutrition(ingredientId, recipe.id, macros);
       router.refresh();
     });
   };
@@ -117,16 +162,12 @@ export function RecipeView({
     [parsed, servings, recipe.servings, editing],
   );
 
-  // While editing, show what the numbers will become as the ingredients change.
-  const macros = editing
-    ? (hasStored && recipe.nutritionSource !== "estimated"
-        ? storedMacros
-        : liveEstimate.perServing)
-    : hasStored
-      ? storedMacros
-      : liveEstimate.perServing;
-
+  // An imported or hand-typed total is authoritative and stays put. An
+  // estimated one is supposed to track the ingredients, though — recomputing
+  // it live (rather than only on save) is what makes a fresh per-ingredient
+  // override actually move the per-serving numbers you're looking at.
   const isEstimated = !hasStored || recipe.nutritionSource === "estimated";
+  const macros = isEstimated ? liveEstimate.perServing : storedMacros;
 
   const cover = recipe.photos.find((p) => p.isCover) ?? recipe.photos[0];
   const heroUrl = cover?.url ?? recipe.imageUrl;
@@ -309,11 +350,14 @@ export function RecipeView({
               <ul className="space-y-0.5">
                 {recipe.ingredients.map((ingredient, index) => {
                   const isTicked = ticked.has(ingredient.id);
+                  const isExpanded = expandedIds.has(ingredient.id);
+                  const input = parsed[index] ?? ingredient;
                   // Only worth surfacing while the panel is actually
                   // estimating from ingredients — an imported total already
                   // has its own numbers and won't move.
-                  const canAddCalories =
-                    isEstimated && needsCalories(parsed[index] ?? ingredient);
+                  const facts = isEstimated ? estimateIngredientMacros(input) : null;
+                  const isOverride = "override" in input && input.override != null;
+                  const isEditingNutrition = nutritionEditId === ingredient.id;
 
                   return (
                     <li key={ingredient.id}>
@@ -362,60 +406,97 @@ export function RecipeView({
                           </span>
                         </button>
 
-                        {calorieEditId === ingredient.id ? (
-                          <form
-                            onSubmit={(e) => {
-                              e.preventDefault();
-                              saveCalories(ingredient.id);
-                            }}
-                            className="mt-0.5 flex shrink-0 items-center gap-1"
-                          >
-                            <input
-                              autoFocus
-                              type="number"
-                              inputMode="numeric"
-                              min={0}
-                              value={calorieDraft}
-                              onChange={(e) => setCalorieDraft(e.target.value)}
-                              onBlur={() => saveCalories(ingredient.id)}
-                              placeholder="cal"
-                              aria-label={`Calories for ${ingredient.name ?? ingredient.raw}`}
-                              className="field w-16 !px-1.5 !py-1 !text-xs tabular-nums"
-                            />
-                            <button
-                              type="button"
-                              onClick={() => setCalorieEditId(null)}
-                              aria-label="Cancel"
-                              className="p-1 text-faint hover:text-accent"
-                            >
-                              <X size={12} />
-                            </button>
-                          </form>
-                        ) : ingredient.caloriesOverride != null ? (
+                        {isEstimated && (
                           <button
-                            onClick={() => {
-                              setCalorieDraft(String(ingredient.caloriesOverride));
-                              setCalorieEditId(ingredient.id);
-                            }}
-                            className="mt-1.5 shrink-0 text-[11px] text-muted underline decoration-rule underline-offset-2 hover:text-ink"
+                            onClick={() => toggleExpanded(ingredient.id)}
+                            aria-label={isExpanded ? "Hide nutrition facts" : "Show nutrition facts"}
+                            aria-expanded={isExpanded}
+                            className="mt-0.5 shrink-0 rounded p-1 text-faint hover:text-ink"
                           >
-                            {ingredient.caloriesOverride} cal
+                            {isExpanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
                           </button>
-                        ) : (
-                          canAddCalories && (
-                            <button
-                              onClick={() => {
-                                setCalorieDraft("");
-                                setCalorieEditId(ingredient.id);
-                              }}
-                              className="mt-1.5 flex shrink-0 items-center gap-0.5 text-[11px] text-accent hover:underline"
-                            >
-                              <Plus size={11} />
-                              calories
-                            </button>
-                          )
                         )}
                       </div>
+
+                      {isExpanded && (
+                        <div className="mb-1.5 ml-7 rounded-lg bg-card px-3 py-2.5">
+                          {isEditingNutrition ? (
+                            <form
+                              onSubmit={(e) => {
+                                e.preventDefault();
+                                saveNutrition(ingredient.id);
+                              }}
+                            >
+                              <div className="grid grid-cols-3 gap-2">
+                                {NUTRIENTS.map(({ key, label, suffix }) => (
+                                  <label key={key} className="block">
+                                    <span className="text-[10px] text-faint">
+                                      {label}
+                                      {suffix && ` (${suffix})`}
+                                    </span>
+                                    <input
+                                      type="number"
+                                      inputMode="decimal"
+                                      value={nutritionDraft[key] ?? ""}
+                                      onChange={(e) =>
+                                        setNutritionDraft((d) => ({ ...d, [key]: e.target.value }))
+                                      }
+                                      className="field mt-0.5 w-full !px-1.5 !py-1 !text-xs tabular-nums"
+                                    />
+                                  </label>
+                                ))}
+                              </div>
+                              <div className="mt-2 flex gap-2">
+                                <button type="submit" className="btn btn-primary !py-1 !text-xs">
+                                  Save
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => setNutritionEditId(null)}
+                                  className="btn !py-1 !text-xs"
+                                >
+                                  Cancel
+                                </button>
+                              </div>
+                            </form>
+                          ) : facts ? (
+                            <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted">
+                              {NUTRIENTS.map(({ key, label, suffix }) => {
+                                const value = facts[key];
+                                if (value === null) return null;
+                                return (
+                                  <span key={key}>
+                                    {key === "calories"
+                                      ? `${Math.round(value)} cal`
+                                      : `${value}${suffix} ${label.toLowerCase()}`}
+                                  </span>
+                                );
+                              })}
+                              {isOverride && (
+                                <button
+                                  onClick={() =>
+                                    startNutritionEdit(
+                                      ingredient.id,
+                                      "override" in input ? input.override : null,
+                                    )
+                                  }
+                                  className="text-accent hover:underline"
+                                >
+                                  Edit
+                                </button>
+                              )}
+                            </div>
+                          ) : (
+                            <button
+                              onClick={() => startNutritionEdit(ingredient.id, null)}
+                              className="flex items-center gap-1 text-xs text-accent hover:underline"
+                            >
+                              <Plus size={12} />
+                              Add nutrition facts
+                            </button>
+                          )}
+                        </div>
+                      )}
                     </li>
                   );
                 })}
