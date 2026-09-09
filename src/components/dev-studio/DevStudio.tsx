@@ -152,7 +152,9 @@ const ELEMENT_TAGS = ["h1", "h2", "h3", "h4", "p", "li", "strong", "em", "span",
  * one is now detached.
  */
 function swapTag(el: HTMLElement, tag: string): HTMLElement {
-  const next = document.createElement(tag);
+  // el's own document — it may live in the breakpoint preview's iframe, and a
+  // node created by the wrong document can't be inserted into this one.
+  const next = el.ownerDocument.createElement(tag);
   for (const attr of Array.from(el.attributes)) next.setAttribute(attr.name, attr.value);
   while (el.firstChild) next.appendChild(el.firstChild);
   el.replaceWith(next);
@@ -169,14 +171,23 @@ function firstFamily(stack: string): string {
 }
 
 /**
+ * getComputedStyle off el's own window, not the module-global one — el may
+ * live in the breakpoint preview's iframe, a separate Document and Window.
+ */
+function computedStyleOf(el: HTMLElement): CSSStyleDeclaration {
+  const view = el.ownerDocument.defaultView ?? window;
+  return view.getComputedStyle(el);
+}
+
+/**
  * What the element's font-family is *before* any change, written the way it
  * would be written in the stylesheet. Matching the computed stack back to a
  * token means the brief line reads `var(--font-sans) → var(--font-serif)`,
  * which is directly actionable, instead of two sprawling font stacks.
  */
 function describeFontFamily(el: HTMLElement): string {
-  const current = firstFamily(getComputedStyle(el).fontFamily);
-  const root = getComputedStyle(document.documentElement);
+  const current = firstFamily(computedStyleOf(el).fontFamily);
+  const root = computedStyleOf(el.ownerDocument.documentElement as HTMLElement);
   const match = FONT_OPTIONS.find(
     (opt) => firstFamily(root.getPropertyValue(opt.token)) === current
   );
@@ -192,6 +203,13 @@ const BREAKPOINTS = [
 ] as const;
 
 type BreakpointId = (typeof BREAKPOINTS)[number]["id"];
+
+/**
+ * Just the fields the highlight box and popover positioning read. A DOMRect
+ * from inside the framed preview gets rebuilt into one of these — scaled and
+ * offset into the outer page's coordinates — so a real DOMRect isn't required.
+ */
+type Rect = { top: number; left: number; width: number; height: number; bottom: number };
 
 interface PropertyChange {
   property: TypeProperty;
@@ -299,7 +317,10 @@ function buildLocator(el: HTMLElement): Locator {
   let siblingIndex: number | null = null;
   const selector = classes.length ? `${tag}.${classes.join(".")}` : tag;
   try {
-    const matches = Array.from(document.querySelectorAll<HTMLElement>(selector)).filter(
+    // The element's own document, not the module-global one — el may live
+    // inside the breakpoint preview's iframe, a separate document entirely.
+    const ownerDoc = el.ownerDocument;
+    const matches = Array.from(ownerDoc.querySelectorAll<HTMLElement>(selector)).filter(
       (candidate) => (candidate.textContent ?? "").trim().slice(0, 60) === rawText
     );
     if (matches.length > 1) siblingIndex = matches.indexOf(el);
@@ -327,7 +348,7 @@ function hasOwnText(el: HTMLElement): boolean {
 }
 
 function readInitialValue(el: HTMLElement, property: StyleProperty): number {
-  const cs = getComputedStyle(el);
+  const cs = computedStyleOf(el);
   switch (property) {
     case "fontSize":
       return parseFloat(cs.fontSize) || 16;
@@ -423,9 +444,9 @@ function buildMarkdown(annotations: Annotation[]): string {
 export default function DevStudio() {
   const [mode, setMode] = useState<"view" | "annotate">("view");
   const [breakpoint, setBreakpoint] = useState<BreakpointId | null>(null);
-  const [hoverRect, setHoverRect] = useState<DOMRect | null>(null);
+  const [hoverRect, setHoverRect] = useState<Rect | null>(null);
   const [focusedEl, setFocusedEl] = useState<HTMLElement | null>(null);
-  const [focusedRect, setFocusedRect] = useState<DOMRect | null>(null);
+  const [focusedRect, setFocusedRect] = useState<Rect | null>(null);
   const [touchedProps, setTouchedProps] = useState<Set<TypeProperty>>(new Set());
   const [values, setValues] = useState<Partial<Record<StyleProperty, number>>>({});
   const [ranges, setRanges] = useState<Partial<Record<StyleProperty, Range>>>({});
@@ -453,6 +474,11 @@ export default function DevStudio() {
   const commentRef = useRef<HTMLTextAreaElement>(null);
   const popoverRef = useRef<HTMLDivElement>(null);
   const dragRef = useRef<{ dx: number; dy: number } | null>(null);
+  const iframeRef = useRef<HTMLIFrameElement>(null);
+  // Bumped on every iframe navigation, so effects that wire up listeners on
+  // its contentDocument know to re-run against the fresh Document — the old
+  // one, and every listener on it, is gone once the frame reloads.
+  const [frameLoadTick, setFrameLoadTick] = useState(0);
 
   useEffect(() => {
     setAnnotations(loadAnnotations());
@@ -480,6 +506,34 @@ export default function DevStudio() {
 
   const isOwnUI = (target: EventTarget | null) =>
     target instanceof Element && !!target.closest("[data-devstudio-ui]");
+
+  /**
+   * el's rect, in the outer page's coordinates. An element picked from inside
+   * the breakpoint preview lives in a document whose own getBoundingClientRect
+   * answers in the iframe's *unscaled* coordinate space — genuinely 390px
+   * wide regardless of how small the frame is drawn — so it has to be scaled
+   * and offset by the iframe's own position to land in the right place when
+   * the highlight box or popover renders in the parent document.
+   */
+  const getRect = useCallback(
+    (el: HTMLElement): Rect => {
+      const inner = el.getBoundingClientRect();
+      if (el.ownerDocument === document) return inner;
+      const frame = iframeRef.current;
+      if (!frame) return inner;
+      const outer = frame.getBoundingClientRect();
+      const top = outer.top + inner.top * frameScale;
+      const height = inner.height * frameScale;
+      return {
+        top,
+        left: outer.left + inner.left * frameScale,
+        width: inner.width * frameScale,
+        height,
+        bottom: top + height,
+      };
+    },
+    [frameScale]
+  );
 
   /** Undo both the inline style edits and any tag swap, in that order. */
   const revertUnsavedEdits = useCallback((el: HTMLElement, touched: Set<TypeProperty>) => {
@@ -533,10 +587,10 @@ export default function DevStudio() {
       setComment("");
       setShowType(false);
       setFocusedEl(el);
-      setFocusedRect(el.getBoundingClientRect());
+      setFocusedRect(getRect(el));
       setHoverRect(null);
     },
-    [focusedEl, touchedProps, revertUnsavedEdits]
+    [focusedEl, touchedProps, revertUnsavedEdits, getRect]
   );
 
   useEffect(() => {
@@ -547,7 +601,7 @@ export default function DevStudio() {
         setHoverRect(null);
         return;
       }
-      setHoverRect((e.target as HTMLElement).getBoundingClientRect());
+      setHoverRect(getRect(e.target as HTMLElement));
     };
 
     const handleClick = (e: MouseEvent) => {
@@ -561,25 +615,45 @@ export default function DevStudio() {
 
     document.addEventListener("mousemove", handleMove, true);
     document.addEventListener("click", handleClick, true);
+
+    // The same picker, wired to the framed preview's own document too. A
+    // click inside an iframe never reaches the parent document's listeners —
+    // it's a separate document entirely — so without this the preview would
+    // be unannotatable the moment a breakpoint is open.
+    const frameDoc = iframeRef.current?.contentDocument;
+    frameDoc?.addEventListener("mousemove", handleMove, true);
+    frameDoc?.addEventListener("click", handleClick, true);
+
     return () => {
       document.removeEventListener("mousemove", handleMove, true);
       document.removeEventListener("click", handleClick, true);
+      frameDoc?.removeEventListener("mousemove", handleMove, true);
+      frameDoc?.removeEventListener("click", handleClick, true);
     };
-  }, [mode, pickElement]);
+  }, [mode, pickElement, getRect, breakpoint, frameLoadTick]);
 
   useEffect(() => {
     if (!focusedEl) return;
-    const update = () => setFocusedRect(focusedEl.getBoundingClientRect());
+    const update = () => setFocusedRect(getRect(focusedEl));
     const ro = new ResizeObserver(update);
     ro.observe(focusedEl);
     window.addEventListener("scroll", update, { passive: true, capture: true });
     window.addEventListener("resize", update);
+    // Scrolling *inside* the framed preview moves the element relative to the
+    // iframe too, and that scroll never reaches the outer window's listener.
+    const frameWindow = focusedEl.ownerDocument.defaultView;
+    if (frameWindow && frameWindow !== window) {
+      frameWindow.addEventListener("scroll", update, { passive: true, capture: true });
+    }
     return () => {
       ro.disconnect();
       window.removeEventListener("scroll", update, true);
       window.removeEventListener("resize", update);
+      if (frameWindow && frameWindow !== window) {
+        frameWindow.removeEventListener("scroll", update, true);
+      }
     };
-  }, [focusedEl]);
+  }, [focusedEl, getRect]);
 
   // Scale the framed preview down when the chosen width doesn't fit the real
   // window — 1440 rarely does once the browser's own chrome is accounted for.
@@ -602,7 +676,10 @@ export default function DevStudio() {
   }, [breakpoint]);
 
   /**
-   * Esc switches modes.
+   * Esc switches modes — and only that. It used to also close an open
+   * breakpoint preview, but that meant Esc-ing out of a note left inside the
+   * Phone preview silently threw the preview away too, one keystroke doing
+   * two unrelated things. Closing the preview is what its own × is for.
    *
    * With a popover open it closes that first and leaves the mode alone. One
    * rule, and it protects a half-typed note — Esc is reflex for "get this panel
@@ -615,10 +692,6 @@ export default function DevStudio() {
       if (e.key !== "Escape") return;
       if (focusedEl) {
         handleCancel();
-        return;
-      }
-      if (breakpoint) {
-        setBreakpoint(null);
         return;
       }
       setModeSafely(mode === "view" ? "annotate" : "view");
@@ -667,7 +740,7 @@ export default function DevStudio() {
     const next = swapTag(focusedEl, tag);
     setElementTag(tag);
     setFocusedEl(next);
-    setFocusedRect(next.getBoundingClientRect());
+    setFocusedRect(getRect(next));
     // Re-read the sliders off the new tag: the whole point is that h2 and p
     // resolve to different sizes and weights, so the numbers under the menu
     // have to describe what is now on screen.
@@ -815,8 +888,6 @@ export default function DevStudio() {
     if (focusedEl) handleCancel();
     setHoverRect(null);
     setMode(next);
-    // The picker and the framed preview can't both own the pointer.
-    if (next === "annotate") setBreakpoint(null);
   };
 
   const tagChanged = !!focusedEl && tagOf(focusedEl) !== originalTagRef.current;
@@ -876,8 +947,10 @@ export default function DevStudio() {
 
       {/* Its own group in the opposite corner. Sharing the bottom bar with the
           mode switch meant the toolbar changed width every time the mode
-          changed, which moved the Notes button out from under the pointer. */}
-      {mode === "view" && (
+          changed, which moved the Notes button out from under the pointer.
+          Shown in Annotate too once a preview is already open, so switching
+          device sizes doesn't require bouncing back to View first. */}
+      {(mode === "view" || breakpoint) && (
         <div className="devstudio__bp-bar" role="group" aria-label="Preview width">
           {BREAKPOINTS.map((bp) => (
             <button
@@ -930,8 +1003,14 @@ export default function DevStudio() {
                 to the viewport, so a narrowed element on a wide window still
                 gets desktop CSS — which is exactly the thing being checked. */}
               <iframe
+                ref={iframeRef}
                 title={`${activeFrame.label} preview`}
                 src={`${window.location.pathname}${window.location.search ? `${window.location.search}&` : "?"}ds-preview=1`}
+                // A fresh navigation replaces contentDocument with a new
+                // Document — the annotate picker's listeners were on the old
+                // one and are gone with it, so re-run the effect that attaches
+                // them.
+                onLoad={() => setFrameLoadTick((n) => n + 1)}
               />
             </div>
           </div>
