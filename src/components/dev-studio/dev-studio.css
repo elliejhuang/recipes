@@ -26,10 +26,14 @@
   color: #1a1a1a;
 }
 
-/* One toolbar instead of two free-floating pills. The old pair were
-   positioned independently at bottom:20px right:20px and right:150px, so any
-   change to either one's width left them overlapping or gapped. */
-/* z-index above the framed preview's backdrop. Both used to be `auto`, and the
+/* One control pad — the mode switch (View/Annotate) and the breakpoint
+   switch (Phone/Narrow/Wide) used to be two free-floating pills, positioned
+   independently at bottom:20/right:20 and top:20/right:20, so either one
+   changing width could overlap or gap the other, and they read as two
+   unrelated tools even though "what am I looking at" and "how wide is it"
+   are the same question. Merged into one rectangular, rounded-corner pad
+   with a single drag position. */
+/* z-index above the framed preview's backdrop. Used to be `auto`, and the
    backdrop comes later in the DOM, so opening a breakpoint preview painted it
    straight over this bar — the toolbar was still there and still visible-ish
    through the dark backdrop, but unclickable, which reads as the overlay having
@@ -40,78 +44,114 @@
   right: 20px;
   z-index: 1;
   display: flex;
-  align-items: center;
-  gap: 6px;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 4px;
   padding: 5px;
-  background: rgba(255, 255, 255, 0.86);
-  backdrop-filter: blur(12px) saturate(140%);
-  -webkit-backdrop-filter: blur(12px) saturate(140%);
+  background: rgba(255, 255, 255, 0.82);
+  backdrop-filter: blur(20px) saturate(180%);
+  -webkit-backdrop-filter: blur(20px) saturate(180%);
   border: 1px solid rgba(0, 0, 0, 0.08);
-  border-radius: 999px;
+  border-top-color: rgba(255, 255, 255, 0.7); /* bright top edge — light catching a glass surface */
+  border-radius: 26px;
   box-shadow: 0 6px 24px rgba(0, 0, 0, 0.18);
 }
 
-.devstudio__modes {
+/* Phone/Narrow/Wide on top, View/Annotate/Notes underneath — each row is
+   its own horizontal flex line inside the stacked pad. */
+.devstudio__bar-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.devstudio__bar-row--bp {
+  justify-content: center;
+}
+
+/* A thin seam between the two switches and Notes, so the merged pad still
+   reads as three distinct controls rather than one undifferentiated row. */
+.devstudio__bar-divider {
+  width: 1px;
+  height: 22px;
+  flex-shrink: 0;
+  background: rgba(0, 0, 0, 0.09);
+}
+
+/* Horizontal counterpart, seaming the Phone/Narrow/Wide row from the row
+   underneath it instead of two controls side by side. */
+.devstudio__bar-divider--h {
+  width: auto;
+  height: 1px;
+  margin: 0 4px;
+  background: rgba(0, 0, 0, 0.09);
+}
+
+.devstudio__modes,
+.devstudio__bp-group {
+  position: relative;
   display: flex;
   padding: 2px;
   background: rgba(0, 0, 0, 0.06);
   border-radius: 999px;
 }
 
-.devstudio__mode {
-  padding: 6px 14px;
+/* The pill that glides under whichever button is active, instead of the
+   background snapping straight there. Position/width come from measuring
+   the real `.is-active` button (see measureIndicator in DevStudio.tsx), and
+   the easing overshoots very slightly on arrival — a critically-damped
+   spring's shape, not a linear ease — so picking a new mode or width reads
+   as a small physical motion rather than a flag flipping. */
+.devstudio__seg-indicator {
+  position: absolute;
+  top: 2px;
+  bottom: 2px;
+  left: 0;
+  border-radius: 999px;
+  background: #1a1a1a;
+  transition:
+    transform 280ms cubic-bezier(0.34, 1.56, 0.64, 1),
+    width 280ms cubic-bezier(0.34, 1.56, 0.64, 1);
+  z-index: 0;
+}
+
+.devstudio__seg-indicator--accent {
+  background: #0099ff;
+}
+
+.devstudio__mode,
+.devstudio__bp {
+  position: relative;
+  z-index: 1;
   border: none;
   border-radius: 999px;
   background: none;
-  color: #52525b;
   font: inherit;
-  font-weight: 600;
   cursor: pointer;
-  transition: background 150ms ease-out, color 150ms ease-out;
+  transition: color 150ms ease-out;
 }
 
-.devstudio__mode.is-active {
-  background: #1a1a1a;
-  color: #fff;
-}
-
-/* Top right, away from the mode switch. Sits above the framed preview's
-   backdrop so the widths stay reachable while a preview is open. */
-.devstudio__bp-bar {
-  position: fixed;
-  top: 20px;
-  right: 20px;
-  z-index: 1;
-  display: flex;
-  gap: 2px;
-  padding: 5px;
-  background: rgba(255, 255, 255, 0.86);
-  backdrop-filter: blur(12px) saturate(140%);
-  -webkit-backdrop-filter: blur(12px) saturate(140%);
-  border: 1px solid rgba(0, 0, 0, 0.08);
-  border-radius: 999px;
-  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.18);
+.devstudio__mode {
+  padding: 6px 14px;
+  color: #52525b;
+  font-weight: 600;
 }
 
 .devstudio__bp {
   padding: 6px 10px;
-  border: none;
-  border-radius: 999px;
-  background: none;
   color: #52525b;
-  font: inherit;
   font-weight: 500;
-  cursor: pointer;
-  transition: background 150ms ease-out, color 150ms ease-out;
 }
 
-.devstudio__bp:hover {
-  background: rgba(0, 0, 0, 0.06);
-}
-
+.devstudio__mode.is-active,
 .devstudio__bp.is-active {
-  background: #0099ff;
   color: #fff;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .devstudio__seg-indicator {
+    transition: none;
+  }
 }
 
 /* ---- Drag handle --------------------------------------------------------
@@ -171,16 +211,35 @@
   stroke-dasharray: 3 3;
 }
 
+.devstudio__markers-svg line.is-copied {
+  stroke: #16a34a;
+}
+
+/* Both the dot and the label reopen the same note (see the `reopen` handler
+   in DevStudio.tsx) — real <button>s rather than the plain divs these used
+   to be, with their own pointer-events re-enabled against the marker
+   layer's own `pointer-events: none` (see .devstudio__markers), since the
+   layer as a whole must stay click-through everywhere it *isn't* a marker. */
 .devstudio__marker-dot {
   position: fixed;
   width: 8px;
   height: 8px;
   margin: -4px 0 0 -4px;
+  padding: 0;
   background: #0099ff;
   border: 2px solid #fff;
   border-radius: 50%;
   box-shadow: 0 1px 4px rgba(0, 0, 0, 0.35);
-  pointer-events: none;
+  pointer-events: auto;
+  cursor: pointer;
+}
+
+.devstudio__marker-dot:hover {
+  transform: scale(1.25);
+}
+
+.devstudio__marker-dot.is-copied {
+  background: #16a34a;
 }
 
 .devstudio__marker-label {
@@ -194,7 +253,18 @@
   font-size: 11px;
   line-height: 1.35;
   color: #1a1a1a;
-  pointer-events: none;
+  text-align: left;
+  font-family: inherit;
+  pointer-events: auto;
+  cursor: pointer;
+}
+
+.devstudio__marker-label:hover {
+  border-color: #0077cc;
+}
+
+.devstudio__marker-label.is-copied {
+  border-color: #16a34a;
 }
 
 .devstudio__notes-btn {
@@ -309,6 +379,37 @@
   border-radius: 10px;
   box-shadow: 0 8px 30px rgba(0, 0, 0, 0.2);
   padding: 14px;
+  transform-origin: top left;
+  animation: devstudio-popover-in 220ms cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+/* Materialize, don't just fade — a small scale-in reads as the panel
+   arriving from the thing that opened it (the picked element, a marker, a
+   tray item), which is where it's anchored either way. */
+@keyframes devstudio-popover-in {
+  from {
+    opacity: 0;
+    transform: scale(0.94) translateY(-4px);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .devstudio__popover {
+    animation: devstudio-popover-fade 150ms ease-out;
+  }
+
+  @keyframes devstudio-popover-fade {
+    from {
+      opacity: 0;
+    }
+    to {
+      opacity: 1;
+    }
+  }
 }
 
 /* Also the drag handle. touch-action:none is what lets a pointer drag work on
@@ -473,6 +574,37 @@
   margin-bottom: 10px;
 }
 
+/* Names the viewport a note is about to be filed under and lets the default
+   scope be flipped either way. Sits right under the comment box — the same
+   decision as the text above it, not a separate settings row. */
+.devstudio__scope-toggle {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-bottom: 10px;
+  font-size: 12px;
+  color: #444;
+  cursor: pointer;
+}
+
+.devstudio__scope-toggle input {
+  cursor: pointer;
+}
+
+.devstudio__scope-toggle-context {
+  color: #999;
+}
+
+/* Same grey-pill treatment as the existing-notes list it sits inside, so a
+   scoped note reads as "the same kind of fact" as the comment beside it
+   rather than as a warning label. */
+.devstudio__scope-badge {
+  color: #0099ff;
+  font-style: normal;
+  font-weight: 600;
+}
+
 .devstudio__slider-row {
   margin-bottom: 8px;
 }
@@ -600,6 +732,65 @@
   margin: 0;
 }
 
+/* Explains why the list below might look shorter than the total count on the
+   Notes button — without this a scoped note quietly missing from the list
+   reads as data loss, not as "not relevant to what's open right now". */
+.devstudio__tray-hint {
+  margin: 0;
+  padding: 8px 16px;
+  background: #f0f8ff;
+  border-bottom: 1px solid #eee;
+  font-size: 11px;
+  color: #0077cc;
+}
+
+/* One tab per page, most-recently-active first, plus a trailing "All" tab —
+   see the sortedPages/trayTab computation in DevStudio.tsx. Horizontally
+   scrollable rather than wrapping: a long page path shouldn't grow the tray
+   taller, and a scrollable strip is the same affordance the OS already
+   teaches for tabs. */
+.devstudio__tray-tabs {
+  display: flex;
+  gap: 2px;
+  padding: 8px 16px 0;
+  overflow-x: auto;
+  border-bottom: 1px solid #eee;
+  scrollbar-width: none;
+}
+
+.devstudio__tray-tabs::-webkit-scrollbar {
+  display: none;
+}
+
+.devstudio__tray-tab {
+  flex-shrink: 0;
+  padding: 6px 10px 8px;
+  border: none;
+  border-bottom: 2px solid transparent;
+  background: none;
+  color: #888;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: color 150ms ease-out, border-color 200ms cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+.devstudio__tray-tab:hover {
+  color: #52525b;
+}
+
+.devstudio__tray-tab.is-active {
+  color: #1a1a1a;
+  border-bottom-color: #0099ff;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .devstudio__tray-tab {
+    transition: none;
+  }
+}
+
 .devstudio__tray-list {
   flex: 1;
   overflow-y: auto;
@@ -621,12 +812,61 @@
   background: #f8f9fb;
   border-radius: 8px;
   border: 1px solid #eee;
+  transition: background 200ms ease-out, border-color 200ms ease-out;
+}
+
+.devstudio__tray-item-page {
+  font-size: 10px;
+  font-weight: 600;
+  color: #999;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  margin-bottom: 4px;
+}
+
+/* A note that's actually somewhere else now — safely in the clipboard from
+   the last Copy Brief — differentiates itself from the ones that aren't, so
+   at a glance it's obvious what's still owed a copy after a mixed editing
+   session. Cleared the moment any note changes (see copiedIds in
+   DevStudio.tsx), so green never implies a copy that's gone stale. */
+.devstudio__tray-item.is-copied {
+  background: #f0fdf4;
+  border-color: #86efac;
+}
+
+.devstudio__tray-item.is-copied .devstudio__tray-item-locator {
+  color: #166534;
+}
+
+/* Only elements that actually exist on the page currently open get this —
+   see `canReopen` at the call site. A cursor and a border on hover are the
+   whole affordance; there's no icon budget in a card this small to spell out
+   "click to reopen" more directly than the title tooltip already does. */
+.devstudio__tray-item.is-reopenable {
+  cursor: pointer;
+}
+
+.devstudio__tray-item.is-reopenable:hover {
+  border-color: #0099ff;
 }
 
 .devstudio__tray-item-locator {
   font-size: 12px;
   color: #666;
   margin-bottom: 4px;
+}
+
+.devstudio__tray-item-scope {
+  display: inline-block;
+  margin-bottom: 4px;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: #e6f4ff;
+  color: #0077cc;
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
 }
 
 .devstudio__tray-item-comment {
@@ -692,6 +932,15 @@
   border: 1px solid #e63959;
 }
 
+/* Design/Portfolio's own stylesheet never actually styled its disabled Clear
+   state — copied from chi-delta-website's independent fix rather than
+   propagating that gap here too. */
+.devstudio__clear:disabled {
+  color: #e6395980;
+  border-color: #e6395980;
+  cursor: not-allowed;
+}
+
 /* ─── Actually on a phone ──────────────────────────────────────────────────
  *
  * Added for Recipe Box, which is used on a phone in a way the portfolio isn't.
@@ -699,19 +948,29 @@
  */
 @media (max-width: 640px) {
   /* The breakpoint switcher simulates phone width from a desktop. On a phone
-     it's both redundant and sitting on top of the app's own header. */
-  .devstudio__bp-bar {
+     it's both redundant and sitting on top of the app's own header. It's now
+     a row inside the same merged pad rather than its own bar, so hide just
+     that row (and the seam under it) instead of a whole second element. */
+  .devstudio__bar-row--bp,
+  .devstudio__bar-divider--h {
     display: none;
   }
 
   /* Full width along the bottom, clear of the home indicator, rather than a
      pill pinned into the right corner where a thumb can't comfortably reach
-     all three modes. */
+     all three modes. The pad is a column (bp row stacked over the main row)
+     on desktop; with the bp row hidden here, center the one remaining row
+     both ways. */
   .devstudio__bar {
     right: 8px;
     left: 8px;
     bottom: calc(8px + env(safe-area-inset-bottom));
+    align-items: center;
+  }
+
+  .devstudio__bar-row--main {
     justify-content: center;
+    width: 100%;
   }
 
   .devstudio__mode,

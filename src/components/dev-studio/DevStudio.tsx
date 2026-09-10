@@ -51,7 +51,6 @@ const DOCK_BELOW_PX = 640;
 const POPOVER_POS_KEY = "devstudio:popover-pos";
 const RESET_MS = 1500;
 const BAR_POS_KEY = "devstudio:barpos";
-const BP_POS_KEY = "devstudio:bppos";
 
 /**
  * Type only. The layout sliders (padding, gap, margin) came out: a single
@@ -278,6 +277,15 @@ interface Annotation {
   /** Set only when the element was re-cast as a different tag. */
   tagChange?: { from: string; to: string };
   createdAt: string;
+  /** The breakpoint preview open when this was saved, or null for the real
+   *  page (no preview — "Web"). Recorded so a note taken against the phone
+   *  preview doesn't quietly get read as a general instruction later. */
+  viewport: BreakpointId | null;
+  /** Whether this note applies beyond just `viewport`. Phone notes default
+   *  to false (phone-only, since the phone preview is a genuinely different
+   *  target rather than another web width); Narrow/Wide/Web default to true,
+   *  since those are all the same web layout at different widths. */
+  allSizes: boolean;
 }
 
 type Range = { min: number; max: number; step: number };
@@ -285,7 +293,17 @@ type Range = { min: number; max: number; step: number };
 function loadAnnotations(): Annotation[] {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
-    return raw ? JSON.parse(raw) : [];
+    if (!raw) return [];
+    const parsed = JSON.parse(raw) as Partial<Annotation>[];
+    // Notes saved before viewport scoping existed have neither field. Treated
+    // as "applies everywhere" — the safest read of a note nobody scoped,
+    // rather than guessing it was phone-only and hiding it from every other
+    // view.
+    return parsed.map((a) => ({
+      ...a,
+      viewport: a.viewport ?? null,
+      allSizes: a.allSizes ?? true,
+    })) as Annotation[];
   } catch {
     return [];
   }
@@ -495,6 +513,19 @@ function describeLocator(locator: Locator): string {
   return `${locator.tag}${classPart}`;
 }
 
+/**
+ * Only worth a line when the note was taken against a breakpoint preview —
+ * "Web" (no preview, applies everywhere) is the overwhelming default and
+ * would just be noise repeated on every single item. A phone-only note gets
+ * this front and centre, since that's exactly the distinction the export
+ * exists to preserve.
+ */
+function describeScope(a: Annotation): string | null {
+  if (!a.viewport) return null;
+  const label = BREAKPOINTS.find((b) => b.id === a.viewport)?.label ?? a.viewport;
+  return a.allSizes ? `${label} (all sizes)` : `${label} only`;
+}
+
 function buildMarkdown(annotations: Annotation[]): string {
   const date = new Date().toISOString().slice(0, 10);
   const lines: string[] = [`# Studio notes — ${date}`, ""];
@@ -503,6 +534,8 @@ function buildMarkdown(annotations: Annotation[]): string {
     list.forEach((a) => {
       const excerptPart = a.locator.textExcerpt ? ` ("${a.locator.textExcerpt}")` : "";
       lines.push(`- **${describeLocator(a.locator)}**${excerptPart}`);
+      const scope = describeScope(a);
+      if (scope) lines.push(`  Scope: ${scope}`);
       if (a.comment) lines.push(`  Comment: ${a.comment}`);
       // First, because re-casting the element is the change every other line
       // here is relative to.
@@ -532,9 +565,31 @@ export default function DevStudio() {
   const [elementTag, setElementTag] = useState("");
   const [comment, setComment] = useState("");
   const [showType, setShowType] = useState(false);
+  /** Whether the note being written applies beyond the current breakpoint
+   *  preview. Reset per-pick in `pickElement`, defaulting to false only when
+   *  the preview open at pick time is Phone — see the Annotation field this
+   *  gets saved into for why. */
+  const [applyAllSizes, setApplyAllSizes] = useState(true);
   const [isTrayOpen, setTrayOpen] = useState(false);
   const [annotations, setAnnotations] = useState<Annotation[]>([]);
   const [copyStatus, setCopyStatus] = useState<"idle" | "copied" | "failed">("idle");
+  /**
+   * Whether the current set of notes has been copied out. Separate from
+   * copyStatus, which is the button's own label and resets itself after a
+   * second and a half — far too short a window to then reach for Clear. This
+   * latch stays up until the notes change, which is exactly when a previous
+   * copy stops covering what is on screen.
+   */
+  const [copiedOut, setCopiedOut] = useState(false);
+  /** The ids that were actually in the last successful Copy Brief — lets the
+   *  tray/markers mark exactly those notes green, not just "some copy
+   *  happened at some point." Cleared alongside copiedOut whenever the notes
+   *  change (see the effect below), so a stale copy never reads as current. */
+  const [copiedIds, setCopiedIds] = useState<Set<string>>(new Set());
+  /** Which Studio Notes tab is showing: a page path, or "__all__" for every
+   *  page in recency order. Null means "no explicit choice yet" — the tray
+   *  then defaults to the current page's tab if it has notes. */
+  const [activeTrayTab, setActiveTrayTab] = useState<string | null>(null);
   const [frameScale, setFrameScale] = useState(1);
   const [popoverPos, setPopoverPos] = useState<PopoverPos | null>(null);
   /** "C" toggles this on/off; see the keydown effect below. */
@@ -544,15 +599,16 @@ export default function DevStudio() {
   /**
    * Where the toolbar has been dragged to, as an offset from the bottom-right
    * corner it starts in. Kept as an offset rather than as coordinates so the
-   * bar stays anchored to that corner when the window resizes.
+   * bar stays anchored to that corner when the window resizes. The
+   * breakpoint switcher used to be a second, independently-dragged pill in
+   * the opposite corner; it's now a row inside this same pad, so one offset
+   * covers both.
    *
    * Persisted, because the position is a working preference — having to shove
    * the bar out of the way again on every reload is exactly the annoyance
    * this is meant to remove.
    */
   const [barOffset, setBarOffset] = useState({ x: 0, y: 0 });
-  /** Same idea for the breakpoint switcher in the opposite corner. */
-  const [bpOffset, setBpOffset] = useState({ x: 0, y: 0 });
 
   /** Minimum gap kept between a dragged bar and the true window edge. */
   const DRAG_MARGIN = 12;
@@ -648,7 +704,6 @@ export default function DevStudio() {
     // read right now reflects each bar's plain, un-translated anchor position —
     // exactly the `baseLeft`/`baseTop` clampBarOffset expects.
     const bar = document.querySelector<HTMLElement>(".devstudio__bar")?.getBoundingClientRect();
-    const bpBar = document.querySelector<HTMLElement>(".devstudio__bp-bar")?.getBoundingClientRect();
     try {
       const raw = localStorage.getItem(BAR_POS_KEY);
       if (raw && bar) {
@@ -659,14 +714,41 @@ export default function DevStudio() {
         // longer see or reach.
         setBarOffset(clampBarOffset(saved.x, saved.y, bar.left, bar.top, bar.width, bar.height));
       }
-      const rawBp = localStorage.getItem(BP_POS_KEY);
-      if (rawBp && bpBar) {
-        const saved = JSON.parse(rawBp);
-        setBpOffset(clampBarOffset(saved.x, saved.y, bpBar.left, bpBar.top, bpBar.width, bpBar.height));
-      }
     } catch {
-      // A malformed or blocked store just means the bars open where they always did.
+      // A malformed or blocked store just means the bar opens where it always did.
     }
+  }, []);
+
+  // ---- Segmented-control sliding indicator -------------------------------
+  // The mode switch and the breakpoint switch are now one merged control pad
+  // (see the toolbar JSX below), and each half gets a pill that glides under
+  // the active button rather than snapping — measured off the real DOM
+  // instead of hardcoded widths, since button width varies with its label.
+  const modesGroupRef = useRef<HTMLDivElement>(null);
+  const bpGroupRef = useRef<HTMLDivElement>(null);
+  const [modeIndicator, setModeIndicator] = useState<{ left: number; width: number } | null>(null);
+  const [bpIndicator, setBpIndicator] = useState<{ left: number; width: number } | null>(null);
+
+  const measureIndicator = (container: HTMLElement | null) => {
+    const active = container?.querySelector<HTMLElement>(".is-active");
+    return active ? { left: active.offsetLeft, width: active.offsetWidth } : null;
+  };
+
+  useLayoutEffect(() => {
+    setModeIndicator(measureIndicator(modesGroupRef.current));
+  }, [mode]);
+
+  useLayoutEffect(() => {
+    setBpIndicator(measureIndicator(bpGroupRef.current));
+  }, [breakpoint]);
+
+  useEffect(() => {
+    const onResize = () => {
+      setModeIndicator(measureIndicator(modesGroupRef.current));
+      setBpIndicator(measureIndicator(bpGroupRef.current));
+    };
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
   }, []);
 
   const baselineRef = useRef<Partial<Record<TypeProperty, string>>>({});
@@ -775,6 +857,7 @@ export default function DevStudio() {
     setElementTag("");
     setComment("");
     setShowType(false);
+    setApplyAllSizes(true);
     baselineRef.current = {};
     originalTagRef.current = "";
     pickedLocatorRef.current = null;
@@ -812,11 +895,16 @@ export default function DevStudio() {
       // their own entries rather than being loaded in for editing.
       setComment("");
       setShowType(false);
+      // Phone is a genuinely different target, not just another web width —
+      // a note taken there defaults to phone-only. Narrow/Wide/no-preview are
+      // all the same web layout at different widths, so those default to
+      // applying everywhere.
+      setApplyAllSizes(breakpoint !== "phone");
       setFocusedEl(el);
       setFocusedRect(getRect(el));
       setHoverRect(null);
     },
-    [focusedEl, touchedProps, revertUnsavedEdits, getRect]
+    [focusedEl, touchedProps, revertUnsavedEdits, getRect, breakpoint]
   );
 
   useEffect(() => {
@@ -965,7 +1053,11 @@ export default function DevStudio() {
 
     const page = window.location.pathname;
     markerTargetsRef.current = annotations
-      .filter((a) => a.page === page)
+      // Same scope rule as the tray: a phone-only note has no marker on the
+      // real (Web) page, and vice versa — a marker for a note that isn't
+      // actually about what's on screen right now would be misleading, not
+      // just cluttered.
+      .filter((a) => a.page === page && (a.allSizes || a.viewport === breakpoint))
       .map((a) => {
         const el = findElementForLocator(a.locator, page);
         return el ? { id: a.id, text: markerLabel(a), el } : null;
@@ -999,7 +1091,7 @@ export default function DevStudio() {
       window.removeEventListener("scroll", onScrollOrResize, true);
       window.removeEventListener("resize", onScrollOrResize);
     };
-  }, [showMarkers, annotations, getRect]);
+  }, [showMarkers, annotations, breakpoint, getRect]);
 
   const handleSliderChange = (prop: StyleProperty, value: number) => {
     if (!focusedEl) return;
@@ -1182,6 +1274,8 @@ export default function DevStudio() {
         changes,
         ...(currentTag !== originalTag && { tagChange: { from: originalTag, to: currentTag } }),
         createdAt: new Date().toISOString(),
+        viewport: breakpoint,
+        allSizes: applyAllSizes,
       },
     ];
 
@@ -1207,13 +1301,43 @@ export default function DevStudio() {
   const handleClearAll = () => {
     setAnnotations([]);
     saveAnnotations([]);
+    setCopiedOut(false);
   };
+
+  /**
+   * Clicking a tray item re-opens the same focused popover a fresh pick
+   * would — same edit/comment/scale controls, existing notes listed above a
+   * blank one — so a note can be revisited without hunting the element down
+   * on the page again. Only possible for the page currently open: the
+   * locator is matched against the live DOM (see `findElementForLocator`),
+   * and an annotation filed on a different page has nothing here to resolve
+   * against.
+   */
+  const handleReopenFromTray = (a: Annotation) => {
+    if (a.page !== window.location.pathname) return;
+    const el = findElementForLocator(a.locator, a.page);
+    if (!el) return;
+    pickElement(el);
+    setTrayOpen(false);
+  };
+
+  /**
+   * Any change to the notes makes the last copy stale, so the clear gate closes
+   * again. Otherwise a copy, then three more notes, then Clear would throw away
+   * three notes that were never in the clipboard.
+   */
+  useEffect(() => {
+    setCopiedOut(false);
+    setCopiedIds(new Set());
+  }, [annotations]);
 
   const handleCopyBrief = useCallback(async () => {
     if (copyTimeout.current) clearTimeout(copyTimeout.current);
     try {
       await navigator.clipboard.writeText(buildMarkdown(annotations));
       setCopyStatus("copied");
+      setCopiedOut(true);
+      setCopiedIds(new Set(annotations.map((a) => a.id)));
     } catch {
       setCopyStatus("failed");
     }
@@ -1244,9 +1368,59 @@ export default function DevStudio() {
 
   const activeFrame = BREAKPOINTS.find((b) => b.id === breakpoint) ?? null;
 
+  // The same rule everywhere a note gets shown: an all-sizes note is always
+  // relevant; a scoped one only is while its own breakpoint is the one
+  // actually open (including "Web" itself — null === null).
+  const visibleAnnotations = annotations.filter((a) => a.allSizes || a.viewport === breakpoint);
+  const hiddenElsewhereCount = annotations.length - visibleAnnotations.length;
+
+  // ---- Studio Notes tabs --------------------------------------------------
+  // One tab per page that actually has a (currently visible) note, ordered by
+  // that page's own most recent note — not alphabetically, so the page
+  // someone's actively annotating surfaces first — plus a trailing "All" tab
+  // showing every note across pages, newest first.
+  const currentPage = window.location.pathname;
+  const pageRecency = new Map<string, number>();
+  visibleAnnotations.forEach((a) => {
+    const t = new Date(a.createdAt).getTime();
+    if (t > (pageRecency.get(a.page) ?? -Infinity)) pageRecency.set(a.page, t);
+  });
+  const sortedPages = Array.from(pageRecency.keys()).sort(
+    (a, b) => (pageRecency.get(b) ?? 0) - (pageRecency.get(a) ?? 0)
+  );
+  // No explicit tab choice yet defaults to the page open right now, if it has
+  // notes — otherwise "All" is the only tab that could show anything.
+  const trayTab =
+    activeTrayTab && (activeTrayTab === "__all__" || sortedPages.includes(activeTrayTab))
+      ? activeTrayTab
+      : sortedPages.includes(currentPage)
+        ? currentPage
+        : "__all__";
+  const recencyAnnotations = [...visibleAnnotations].sort(
+    (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+  );
+  const shownAnnotations =
+    trayTab === "__all__" ? recencyAnnotations : recencyAnnotations.filter((a) => a.page === trayTab);
+  const copiedNow = copiedOut ? copiedIds : new Set<string>();
+
   // Dot at the element's top-left corner; label offset to the side and
   // clamped so it can't run off whichever edge the element is near.
-  const markerLayout = markers.map((m) => {
+  //
+  // That first pass places every label purely from its own element's
+  // position, with no idea any other label exists — two notes on elements
+  // near each other land their label cards directly on top of one another,
+  // and every one but the topmost is invisible. The second pass below is a
+  // small top-to-bottom cascade: walk the labels and push any that would
+  // overlap an already-placed one straight down until it clears it,
+  // re-checking after every push since clearing one collision can walk it
+  // into another that's further down. LABEL_W/LABEL_H are a fixed estimate
+  // rather than a real measurement, generous enough that a real label is
+  // never larger than the slot it's given.
+  const LABEL_W = 200;
+  const LABEL_H = 60;
+  const LABEL_GAP = 6;
+
+  const initialLayout = markers.map((m) => {
     const dotX = m.rect.left;
     const dotY = m.rect.top;
     const labelX = Math.min(dotX + 18, window.innerWidth - 210);
@@ -1254,84 +1428,74 @@ export default function DevStudio() {
     return { ...m, dotX, dotY, labelX, labelY };
   });
 
+  const placed: typeof initialLayout = [];
+  const markerLayout = [...initialLayout]
+    .sort((a, b) => a.labelY - b.labelY || a.labelX - b.labelX)
+    .map((m) => {
+      let y = m.labelY;
+      let changed = true;
+      while (changed) {
+        changed = false;
+        for (const r of placed) {
+          const overlapsX = Math.abs(r.labelX - m.labelX) < LABEL_W;
+          const overlapsY = y < r.labelY + LABEL_H + LABEL_GAP && y + LABEL_H + LABEL_GAP > r.labelY;
+          if (overlapsX && overlapsY) {
+            y = r.labelY + LABEL_H + LABEL_GAP;
+            changed = true;
+          }
+        }
+      }
+      const resolved = { ...m, labelY: Math.min(y, window.innerHeight - LABEL_H - 8) };
+      placed.push(resolved);
+      return resolved;
+    });
+
   return (
     <div data-devstudio-ui className="devstudio">
       {/* ---- Toolbar ---------------------------------------------------- */}
+      {/* Phone/Narrow/Wide reads as "what am I looking at" — put it on its
+          own row above View/Annotate/Notes so it reads as the primary
+          control, not one segment among five in a single crowded row. */}
       <div
         className="devstudio__bar"
         style={{ translate: `${barOffset.x}px ${barOffset.y}px` }}
       >
-        {/* The grip. Dragging is on a handle rather than the whole bar because
-            every other thing in here is a control — a drag started on a
-            button would either move the bar or fire the button, and
-            whichever one you picked would be wrong half the time. */}
-        <button
-          type="button"
-          className="devstudio__grip"
-          aria-label="Move the studio toolbar"
-          onPointerDown={(event) => startDrag(event, barOffset, setBarOffset, BAR_POS_KEY)}
-        >
-          <svg viewBox="0 0 16 16" fill="none" aria-hidden="true">
-            <circle cx="6" cy="4" r="1.35" fill="currentColor" />
-            <circle cx="10" cy="4" r="1.35" fill="currentColor" />
-            <circle cx="6" cy="8" r="1.35" fill="currentColor" />
-            <circle cx="10" cy="8" r="1.35" fill="currentColor" />
-            <circle cx="6" cy="12" r="1.35" fill="currentColor" />
-            <circle cx="10" cy="12" r="1.35" fill="currentColor" />
-          </svg>
-        </button>
-
-        <div className="devstudio__modes" role="group" aria-label="Studio mode">
-          <button
-            type="button"
-            className={`devstudio__mode${mode === "view" ? " is-active" : ""}`}
-            aria-pressed={mode === "view"}
-            onClick={() => setModeSafely("view")}
-          >
-            View
-          </button>
-          <button
-            type="button"
-            className={`devstudio__mode${mode === "annotate" ? " is-active" : ""}`}
-            aria-pressed={mode === "annotate"}
-            onClick={() => setModeSafely("annotate")}
-          >
-            Annotate
-          </button>
+        <div className="devstudio__bar-row devstudio__bar-row--bp">
+          <div className="devstudio__bp-group" ref={bpGroupRef} role="group" aria-label="Preview width">
+            {bpIndicator && (
+              <span
+                className="devstudio__seg-indicator devstudio__seg-indicator--accent"
+                style={{ transform: `translateX(${bpIndicator.left}px)`, width: bpIndicator.width }}
+                aria-hidden="true"
+              />
+            )}
+            {BREAKPOINTS.map((bp) => (
+              <button
+                key={bp.id}
+                type="button"
+                className={`devstudio__bp${breakpoint === bp.id ? " is-active" : ""}`}
+                aria-pressed={breakpoint === bp.id}
+                onClick={() => setBreakpoint((current) => (current === bp.id ? null : bp.id))}
+                title={`${bp.label} — ${bp.width}px`}
+              >
+                {bp.label}
+              </button>
+            ))}
+          </div>
         </div>
 
-        <button
-          type="button"
-          className="devstudio__notes-btn"
-          onClick={() => setTrayOpen((v) => !v)}
-          aria-label={`Notes, ${annotations.length} saved`}
-        >
-          Notes
-          {annotations.length > 0 && (
-            <span className="devstudio__badge" aria-hidden="true">
-              {annotations.length}
-            </span>
-          )}
-        </button>
-      </div>
+        <span className="devstudio__bar-divider devstudio__bar-divider--h" aria-hidden="true" />
 
-      {/* Its own group in the opposite corner. Sharing the bottom bar with the
-          mode switch meant the toolbar changed width every time the mode
-          changed, which moved the Notes button out from under the pointer.
-          Shown in Annotate too once a preview is already open, so switching
-          device sizes doesn't require bouncing back to View first. */}
-      {(mode === "view" || breakpoint) && (
-        <div
-          className="devstudio__bp-bar"
-          role="group"
-          aria-label="Preview width"
-          style={{ translate: `${bpOffset.x}px ${bpOffset.y}px` }}
-        >
+        <div className="devstudio__bar-row devstudio__bar-row--main">
+          {/* The grip. Dragging is on a handle rather than the whole bar because
+              every other thing in here is a control — a drag started on a
+              button would either move the bar or fire the button, and
+              whichever one you picked would be wrong half the time. */}
           <button
             type="button"
             className="devstudio__grip"
-            aria-label="Move the breakpoint switcher"
-            onPointerDown={(event) => startDrag(event, bpOffset, setBpOffset, BP_POS_KEY)}
+            aria-label="Move the studio toolbar"
+            onPointerDown={(event) => startDrag(event, barOffset, setBarOffset, BAR_POS_KEY)}
           >
             <svg viewBox="0 0 16 16" fill="none" aria-hidden="true">
               <circle cx="6" cy="4" r="1.35" fill="currentColor" />
@@ -1342,20 +1506,50 @@ export default function DevStudio() {
               <circle cx="10" cy="12" r="1.35" fill="currentColor" />
             </svg>
           </button>
-          {BREAKPOINTS.map((bp) => (
+
+          <div className="devstudio__modes" ref={modesGroupRef} role="group" aria-label="Studio mode">
+            {modeIndicator && (
+              <span
+                className="devstudio__seg-indicator"
+                style={{ transform: `translateX(${modeIndicator.left}px)`, width: modeIndicator.width }}
+                aria-hidden="true"
+              />
+            )}
             <button
-              key={bp.id}
               type="button"
-              className={`devstudio__bp${breakpoint === bp.id ? " is-active" : ""}`}
-              aria-pressed={breakpoint === bp.id}
-              onClick={() => setBreakpoint((current) => (current === bp.id ? null : bp.id))}
-              title={`${bp.label} — ${bp.width}px`}
+              className={`devstudio__mode${mode === "view" ? " is-active" : ""}`}
+              aria-pressed={mode === "view"}
+              onClick={() => setModeSafely("view")}
             >
-              {bp.label}
+              View
             </button>
-          ))}
+            <button
+              type="button"
+              className={`devstudio__mode${mode === "annotate" ? " is-active" : ""}`}
+              aria-pressed={mode === "annotate"}
+              onClick={() => setModeSafely("annotate")}
+            >
+              Annotate
+            </button>
+          </div>
+
+          <span className="devstudio__bar-divider" aria-hidden="true" />
+
+          <button
+            type="button"
+            className="devstudio__notes-btn"
+            onClick={() => setTrayOpen((v) => !v)}
+            aria-label={`Notes, ${annotations.length} saved`}
+          >
+            Notes
+            {annotations.length > 0 && (
+              <span className="devstudio__badge" aria-hidden="true">
+                {annotations.length}
+              </span>
+            )}
+          </button>
         </div>
-      )}
+      </div>
 
       {/* ---- Breakpoint preview ----------------------------------------- */}
       {activeFrame && (
@@ -1471,6 +1665,9 @@ export default function DevStudio() {
                 {existingNotes.map((note) => (
                   <li key={note.id}>
                     <span>
+                      {describeScope(note) && (
+                        <em className="devstudio__scope-badge">{describeScope(note)} — </em>
+                      )}
                       {note.comment ||
                         (note.tagChange ? (
                           <em>
@@ -1500,6 +1697,24 @@ export default function DevStudio() {
               rows={2}
               onChange={(e) => setComment(e.target.value)}
             />
+
+            {/* Names the context this note is about to be filed under, and
+                lets that default be overridden either direction — a phone
+                note that's actually a general layout bug, or (less often) a
+                web-width note that's genuinely specific to just Narrow or
+                just Wide. Phone defaults unchecked (see `applyAllSizes`'s own
+                comment); everything else defaults checked. */}
+            <label className="devstudio__scope-toggle">
+              <input
+                type="checkbox"
+                checked={applyAllSizes}
+                onChange={(e) => setApplyAllSizes(e.target.checked)}
+              />
+              Applies to all sizes
+              <span className="devstudio__scope-toggle-context">
+                — viewing {activeFrame ? activeFrame.label : "Web"}
+              </span>
+            </label>
 
             {/* Directly under the box it belongs to, rather than below the
                 sliders — the note is the main thing here and the save was
@@ -1637,17 +1852,47 @@ export default function DevStudio() {
         <div className="devstudio__markers">
           <svg className="devstudio__markers-svg">
             {markerLayout.map((m) => (
-              <line key={m.id} x1={m.dotX} y1={m.dotY} x2={m.labelX} y2={m.labelY + 10} />
+              <line
+                key={m.id}
+                className={copiedNow.has(m.id) ? "is-copied" : undefined}
+                x1={m.dotX}
+                y1={m.dotY}
+                x2={m.labelX}
+                y2={m.labelY + 10}
+              />
             ))}
           </svg>
-          {markerLayout.map((m) => (
-            <div key={m.id}>
-              <div className="devstudio__marker-dot" style={{ top: m.dotY, left: m.dotX }} />
-              <div className="devstudio__marker-label" style={{ top: m.labelY, left: m.labelX }}>
-                {m.text}
+          {markerLayout.map((m) => {
+            const isCopied = copiedNow.has(m.id);
+            // Same popover a fresh pick opens — see handleReopenFromTray. The
+            // annotation this marker stands for is always for the current
+            // page (markerTargetsRef is built from `annotations` filtered to
+            // `a.page === page`), so the lookup below always resolves.
+            const reopen = (e: ReactMouseEvent) => {
+              e.stopPropagation();
+              const a = annotations.find((x) => x.id === m.id);
+              if (a) handleReopenFromTray(a);
+            };
+            return (
+              <div key={m.id}>
+                <button
+                  type="button"
+                  className={`devstudio__marker-dot${isCopied ? " is-copied" : ""}`}
+                  style={{ top: m.dotY, left: m.dotX }}
+                  onClick={reopen}
+                  aria-label={`Reopen note: ${m.text}`}
+                />
+                <button
+                  type="button"
+                  className={`devstudio__marker-label${isCopied ? " is-copied" : ""}`}
+                  style={{ top: m.labelY, left: m.labelX }}
+                  onClick={reopen}
+                >
+                  {m.text}
+                </button>
               </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
       )}
 
@@ -1665,48 +1910,108 @@ export default function DevStudio() {
               ×
             </button>
           </div>
+          {/* A phone-only note shown while looking at Web would read as a
+              general instruction it isn't — the same reason the export
+              carries a Scope line, applied here so the list itself can't
+              mislead. Everything still exists; this just isn't the moment
+              it's relevant, same as it wouldn't show a Wide-only note while
+              Phone is open either. */}
+          {hiddenElsewhereCount > 0 && (
+            <p className="devstudio__tray-hint">
+              Showing {activeFrame ? activeFrame.label : "Web"} — {hiddenElsewhereCount} more saved for
+              other sizes.
+            </p>
+          )}
+          {/* One tab per page with a visible note, most-recently-active
+              first, plus a trailing "All" tab across every page in recency
+              order. Hidden entirely when there's only one page's worth of
+              notes — a single tab isn't a choice. */}
+          {sortedPages.length > 1 && (
+            <div className="devstudio__tray-tabs" role="tablist" aria-label="Notes by page">
+              {sortedPages.map((page) => (
+                <button
+                  key={page}
+                  type="button"
+                  role="tab"
+                  aria-selected={trayTab === page}
+                  className={`devstudio__tray-tab${trayTab === page ? " is-active" : ""}`}
+                  onClick={() => setActiveTrayTab(page)}
+                  title={page}
+                >
+                  {page.replace(/^\//, "").replace(/\/$/, "") || "/"}
+                </button>
+              ))}
+              <button
+                type="button"
+                role="tab"
+                aria-selected={trayTab === "__all__"}
+                className={`devstudio__tray-tab${trayTab === "__all__" ? " is-active" : ""}`}
+                onClick={() => setActiveTrayTab("__all__")}
+              >
+                All
+              </button>
+            </div>
+          )}
           <div className="devstudio__tray-list">
             {annotations.length === 0 ? (
               <p className="devstudio__tray-empty">
                 No notes yet — switch to Annotate and click something.
               </p>
+            ) : shownAnnotations.length === 0 ? (
+              <p className="devstudio__tray-empty">
+                Nothing for {activeFrame ? activeFrame.label : "Web"} yet.
+              </p>
             ) : (
-              Array.from(groupByPage(annotations)).map(([page, list]) => (
-                <div className="devstudio__tray-group" key={page}>
-                  <h3>{page}</h3>
-                  {list.map((a) => (
-                    <div className="devstudio__tray-item" key={a.id}>
-                      <button
-                        type="button"
-                        className="devstudio__tray-item-delete"
-                        onClick={() => handleDelete(a.id)}
-                        aria-label="Delete annotation"
-                      >
-                        ×
-                      </button>
-                      <div className="devstudio__tray-item-locator">
-                        {describeLocator(a.locator)}
-                        {a.locator.textExcerpt ? ` ("${a.locator.textExcerpt}")` : ""}
-                      </div>
-                      {a.comment && <div className="devstudio__tray-item-comment">{a.comment}</div>}
-                      {(a.changes.length > 0 || a.tagChange) && (
-                        <ul className="devstudio__tray-item-changes">
-                          {a.tagChange && (
-                            <li key="element">
-                              element: &lt;{a.tagChange.from}&gt; → &lt;{a.tagChange.to}&gt;
-                            </li>
-                          )}
-                          {a.changes.map((c) => (
-                            <li key={c.property}>
-                              {PROP_LABEL[c.property]}: {c.before} → {c.after}
-                            </li>
-                          ))}
-                        </ul>
-                      )}
+              shownAnnotations.map((a) => {
+                const canReopen = a.page === window.location.pathname;
+                const isCopied = copiedNow.has(a.id);
+                return (
+                  <div
+                    className={`devstudio__tray-item${canReopen ? " is-reopenable" : ""}${isCopied ? " is-copied" : ""}`}
+                    key={a.id}
+                    onClick={canReopen ? () => handleReopenFromTray(a) : undefined}
+                    title={canReopen ? "Click to reopen this element's notes" : undefined}
+                  >
+                    <button
+                      type="button"
+                      className="devstudio__tray-item-delete"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleDelete(a.id);
+                      }}
+                      aria-label="Delete annotation"
+                    >
+                      ×
+                    </button>
+                    {/* Only worth naming the page when the list is actually
+                        mixing pages — the per-page tabs already say it once,
+                        in the tab itself, for every other view. */}
+                    {trayTab === "__all__" && <div className="devstudio__tray-item-page">{a.page}</div>}
+                    <div className="devstudio__tray-item-locator">
+                      {describeLocator(a.locator)}
+                      {a.locator.textExcerpt ? ` ("${a.locator.textExcerpt}")` : ""}
                     </div>
-                  ))}
-                </div>
-              ))
+                    {describeScope(a) && (
+                      <div className="devstudio__tray-item-scope">{describeScope(a)}</div>
+                    )}
+                    {a.comment && <div className="devstudio__tray-item-comment">{a.comment}</div>}
+                    {(a.changes.length > 0 || a.tagChange) && (
+                      <ul className="devstudio__tray-item-changes">
+                        {a.tagChange && (
+                          <li key="element">
+                            element: &lt;{a.tagChange.from}&gt; → &lt;{a.tagChange.to}&gt;
+                          </li>
+                        )}
+                        {a.changes.map((c) => (
+                          <li key={c.property}>
+                            {PROP_LABEL[c.property]}: {c.before} → {c.after}
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                  </div>
+                );
+              })
             )}
           </div>
           <div className="devstudio__tray-footer">
@@ -1722,10 +2027,19 @@ export default function DevStudio() {
                   ? "Couldn't copy"
                   : "Copy brief"}
             </button>
+            {/* Gated behind a successful copy. Clearing is the one destructive
+                thing in here and there is no undo, so the button stays inert
+                until the notes are demonstrably somewhere else. Copying again
+                re-arms it; the status resets on its own, which re-locks it. */}
             <button
               type="button"
               className="devstudio__clear"
-              disabled={annotations.length === 0}
+              disabled={annotations.length === 0 || !copiedOut}
+              title={
+                copiedOut
+                  ? "Delete all notes"
+                  : "Copy the brief first — clearing cannot be undone"
+              }
               onClick={handleClearAll}
             >
               Clear all
