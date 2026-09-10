@@ -44,7 +44,7 @@ export default async function ListPage({
           </Link>
         </div>
       ) : (
-        <RecipeGrid recipes={recipes} />
+        <RecipeGrid recipes={recipes} showActions />
       )}
     </div>
   );

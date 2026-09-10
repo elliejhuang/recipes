@@ -1,5 +1,5 @@
 import { lookupFood } from "./food-data";
-import { toBase, unitFamily } from "./units";
+import { toBase, unitFamily, type UnitFamily } from "./units";
 
 export type Macros = {
   calories: number | null;
@@ -46,6 +46,91 @@ export type Estimate = {
 };
 
 /**
+ * An ingredient's nutrition, taught once from a hand-entered override and
+ * reused for every future line that names it — per one base unit (a gram, a
+ * milliliter, or — for a countable ingredient, which doesn't convert — the
+ * exact unit the lesson was taught in) so it scales to whatever quantity a
+ * new line calls for.
+ */
+export type LearnedFood = {
+  unitFamily: UnitFamily;
+  unitLabel: string | null;
+  perBase: MacroOverride;
+};
+
+/** Keyed by `normalizeIngredientName`. */
+export type LearnedFoods = Record<string, LearnedFood>;
+
+export function normalizeIngredientName(name: string): string {
+  return name.trim().toLowerCase();
+}
+
+function divideMacros(macros: MacroOverride, by: number): MacroOverride {
+  return {
+    calories: macros.calories !== null ? macros.calories / by : null,
+    proteinG: macros.proteinG !== null ? macros.proteinG / by : null,
+    carbsG: macros.carbsG !== null ? macros.carbsG / by : null,
+    fatG: macros.fatG !== null ? macros.fatG / by : null,
+    fiberG: macros.fiberG !== null ? macros.fiberG / by : null,
+    sugarG: macros.sugarG !== null ? macros.sugarG / by : null,
+  };
+}
+
+/**
+ * Turns one hand-entered override into a lesson reusable at any quantity —
+ * null when the line has nothing to divide by (no quantity, or a weight/
+ * volume unit the app doesn't know how to convert).
+ */
+export function toLearnedEntry(
+  quantity: number,
+  unit: string | null,
+  macros: MacroOverride,
+): LearnedFood | null {
+  const family = unitFamily(unit);
+
+  if (family === "count") {
+    if (quantity === 0) return null;
+    return { unitFamily: "count", unitLabel: unit ?? "piece", perBase: divideMacros(macros, quantity) };
+  }
+
+  const base = toBase(quantity, unit);
+  if (base === null || base === 0) return null;
+  return { unitFamily: family, unitLabel: null, perBase: divideMacros(macros, base) };
+}
+
+/**
+ * Applies a taught lesson to a new line, when the units are actually
+ * compatible — a weight lesson reusable at any weight, a count lesson only
+ * at the exact unit it was taught in.
+ */
+function estimateFromLearned(input: EstimateInput, learned: LearnedFoods): Macros | null {
+  if (!input.name || input.quantity === null) return null;
+  const entry = learned[normalizeIngredientName(input.name)];
+  if (!entry) return null;
+
+  let amount: number | null;
+  if (entry.unitFamily === "count") {
+    if ((input.unit ?? "piece") !== (entry.unitLabel ?? "piece")) return null;
+    amount = input.quantity;
+  } else {
+    if (unitFamily(input.unit) !== entry.unitFamily) return null;
+    amount = toBase(input.quantity, input.unit);
+  }
+  if (amount === null) return null;
+
+  const { perBase } = entry;
+  return {
+    calories: perBase.calories !== null ? round(perBase.calories * amount) : null,
+    proteinG: perBase.proteinG !== null ? round(perBase.proteinG * amount, 1) : null,
+    carbsG: perBase.carbsG !== null ? round(perBase.carbsG * amount, 1) : null,
+    fatG: perBase.fatG !== null ? round(perBase.fatG * amount, 1) : null,
+    fiberG: perBase.fiberG !== null ? round(perBase.fiberG * amount, 1) : null,
+    sugarG: perBase.sugarG !== null ? round(perBase.sugarG * amount, 1) : null,
+    sodiumMg: null,
+  };
+}
+
+/**
  * Converts one ingredient line to grams, which is the only unit the nutrition
  * table speaks. Returns null when the line can't be weighed — "salt to taste"
  * has no amount, and an unknown food has no density to convert a cup with.
@@ -85,8 +170,14 @@ const round = (n: number, places = 0) => Math.round(n * 10 ** places) / 10 ** pl
  * quantity, not scaled to a serving) — null when there's no food match and
  * no hand-entered override, which is the UI's cue to offer filling it in.
  */
-export function estimateIngredientMacros(input: EstimateInput): Macros | null {
+export function estimateIngredientMacros(
+  input: EstimateInput,
+  learned?: LearnedFoods | null,
+): Macros | null {
   if (input.override) return { ...EMPTY_MACROS, ...input.override };
+
+  const taught = learned ? estimateFromLearned(input, learned) : null;
+  if (taught) return taught;
 
   const grams = toGrams(input);
   const food = input.name ? lookupFood(input.name) : null;
@@ -114,6 +205,7 @@ export function estimateIngredientMacros(input: EstimateInput): Macros | null {
 export function estimateMacros(
   ingredients: EstimateInput[],
   servings: number,
+  learned?: LearnedFoods | null,
 ): Estimate {
   const totals = {
     calories: 0, proteinG: 0, carbsG: 0,
@@ -131,7 +223,7 @@ export function estimateMacros(
     if (ing.quantity === null) continue;
     countable++;
 
-    const line = estimateIngredientMacros(ing);
+    const line = estimateIngredientMacros(ing, learned);
     if (!line) {
       unmatched.push(ing.name);
       continue;

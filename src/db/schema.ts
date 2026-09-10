@@ -87,6 +87,30 @@ export const ingredients = pgTable(
   (t) => [index("ingredients_recipe_idx").on(t.recipeId)],
 );
 
+/**
+ * An ingredient's nutrition, taught once from a hand-entered override and
+ * reused for every future line that names it — no matter which recipe or how
+ * much of it. Stored per one base unit (a gram, a milliliter, or — for
+ * countable ingredients, which don't convert — the exact unit the lesson was
+ * taught in) so it scales to whatever quantity a new line calls for.
+ */
+export const learnedIngredients = pgTable("learned_ingredients", {
+  id: serial("id").primaryKey(),
+  // Normalized (trimmed, lowercased) ingredient name — the reuse key.
+  name: text("name").notNull().unique(),
+  unitFamily: text("unit_family").notNull(), // "weight" | "volume" | "count"
+  // Only meaningful for "count": counts don't convert across units, so reuse
+  // requires the exact unit the lesson was taught in.
+  unitLabel: text("unit_label"),
+  caloriesPerBase: real("calories_per_base"),
+  proteinPerBase: real("protein_per_base"),
+  carbsPerBase: real("carbs_per_base"),
+  fatPerBase: real("fat_per_base"),
+  fiberPerBase: real("fiber_per_base"),
+  sugarPerBase: real("sugar_per_base"),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+});
+
 export const photos = pgTable(
   "photos",
   {
@@ -215,6 +239,7 @@ export const groceryItemsRelations = relations(groceryItems, ({ one }) => ({
 
 export type Recipe = typeof recipes.$inferSelect;
 export type Ingredient = typeof ingredients.$inferSelect;
+export type LearnedIngredient = typeof learnedIngredients.$inferSelect;
 export type Photo = typeof photos.$inferSelect;
 export type RecipeList = typeof lists.$inferSelect;
 export type GroceryList = typeof groceryLists.$inferSelect;

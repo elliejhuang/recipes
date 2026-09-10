@@ -1,6 +1,6 @@
 import { notFound } from "next/navigation";
 import { RecipeView } from "@/components/recipe-view";
-import { getRecipe, listLists } from "@/lib/queries";
+import { getLearnedFoods, getRecipe, listLists } from "@/lib/queries";
 import { photosEnabled } from "@/lib/supabase";
 
 export const dynamic = "force-dynamic";
@@ -13,9 +13,10 @@ export default async function RecipePage({
   searchParams: Promise<{ edit?: string }>;
 }) {
   const [{ id }, query] = await Promise.all([params, searchParams]);
-  const [recipe, lists] = await Promise.all([
+  const [recipe, lists, learnedFoods] = await Promise.all([
     getRecipe(Number(id)),
     listLists(),
+    getLearnedFoods(),
   ]);
   if (!recipe) notFound();
 
@@ -25,6 +26,7 @@ export default async function RecipePage({
       lists={lists}
       uploadsEnabled={photosEnabled()}
       startEditing={query.edit === "1"}
+      learnedFoods={learnedFoods}
     />
   );
 }

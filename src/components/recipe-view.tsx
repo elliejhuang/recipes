@@ -20,6 +20,7 @@ import { deleteRecipe, saveRecipe, setIngredientNutrition } from "@/lib/actions"
 import {
   estimateIngredientMacros,
   estimateMacros,
+  type LearnedFoods,
   type MacroOverride,
   type Macros,
 } from "@/lib/nutrition";
@@ -52,11 +53,13 @@ export function RecipeView({
   lists,
   uploadsEnabled,
   startEditing = false,
+  learnedFoods,
 }: {
   recipe: FullRecipe;
   lists: ListWithCount[];
   uploadsEnabled: boolean;
   startEditing?: boolean;
+  learnedFoods: LearnedFoods;
 }) {
   const router = useRouter();
   // Read once. The component deliberately doesn't remount on save — a remount
@@ -158,8 +161,8 @@ export function RecipeView({
 
   const hasStored = storedMacros.calories !== null;
   const liveEstimate = useMemo(
-    () => estimateMacros(parsed, editing ? servings : recipe.servings),
-    [parsed, servings, recipe.servings, editing],
+    () => estimateMacros(parsed, editing ? servings : recipe.servings, learnedFoods),
+    [parsed, servings, recipe.servings, editing, learnedFoods],
   );
 
   // An imported or hand-typed total is authoritative and stays put. An
@@ -179,6 +182,15 @@ export function RecipeView({
     setMethod(recipe.method ?? "");
     setLines(recipe.ingredients.map((i) => i.raw));
     setEditing(false);
+  };
+
+  // The draft is thrown away on cancel, so leaving mid-edit without saving is
+  // exactly what happens if you navigate away — a click on Back has to say so
+  // rather than let it happen silently.
+  const goBack = () => {
+    if (editing && !confirm("Discard your changes?")) return;
+    if (editing) cancel();
+    router.push("/");
   };
 
   const save = () =>
@@ -219,7 +231,7 @@ export function RecipeView({
           it's actually stuck. */}
       <div className="no-print sticky top-0 z-20 -mx-4 mb-6 flex items-center gap-2 border-b border-rule bg-paper/90 px-4 py-3 pt-[calc(0.75rem+env(safe-area-inset-top))] backdrop-blur">
         <button
-          onClick={() => router.push("/")}
+          onClick={goBack}
           aria-label="Back to recipes"
           className="shrink-0 rounded-lg p-2 text-ink hover:bg-card"
         >
@@ -229,26 +241,14 @@ export function RecipeView({
           {editing ? title : recipe.title}
         </span>
         {editing ? (
-          <>
-            <button onClick={save} disabled={pending} className="btn btn-primary shrink-0">
-              {pending && <Loader2 size={14} className="animate-spin" />}
-              Done
-            </button>
-            <button onClick={cancel} className="btn shrink-0">
-              Cancel
-            </button>
-            <button
-              onClick={() => {
-                if (confirm(`Delete "${recipe.title}"? This can't be undone.`)) {
-                  startTransition(() => void deleteRecipe(recipe.id));
-                }
-              }}
-              aria-label="Delete recipe"
-              className="btn shrink-0 !px-2.5 text-muted hover:!border-accent hover:text-accent"
-            >
-              <Trash2 size={15} />
-            </button>
-          </>
+          <button
+            onClick={save}
+            disabled={pending}
+            aria-label="Save changes"
+            className="btn btn-primary shrink-0 !px-2.5"
+          >
+            {pending ? <Loader2 size={14} className="animate-spin" /> : <Check size={15} />}
+          </button>
         ) : (
           <>
             <AddToListButton
@@ -355,8 +355,9 @@ export function RecipeView({
                   // Only worth surfacing while the panel is actually
                   // estimating from ingredients — an imported total already
                   // has its own numbers and won't move.
-                  const facts = isEstimated ? estimateIngredientMacros(input) : null;
-                  const isOverride = "override" in input && input.override != null;
+                  const facts = isEstimated
+                    ? estimateIngredientMacros(input, learnedFoods)
+                    : null;
                   const isEditingNutrition = nutritionEditId === ingredient.id;
 
                   return (
@@ -472,19 +473,17 @@ export function RecipeView({
                                   </span>
                                 );
                               })}
-                              {isOverride && (
-                                <button
-                                  onClick={() =>
-                                    startNutritionEdit(
-                                      ingredient.id,
-                                      "override" in input ? input.override : null,
-                                    )
-                                  }
-                                  className="text-accent hover:underline"
-                                >
-                                  Edit
-                                </button>
-                              )}
+                              <button
+                                onClick={() =>
+                                  startNutritionEdit(
+                                    ingredient.id,
+                                    ("override" in input ? input.override : null) ?? facts,
+                                  )
+                                }
+                                className="text-accent hover:underline"
+                              >
+                                Edit
+                              </button>
                             </div>
                           ) : (
                             <button
@@ -513,15 +512,30 @@ export function RecipeView({
         />
       </div>
 
+      <div className="mt-8 max-w-sm">
+        <NutritionPanel macros={macros} isEstimated={isEstimated} />
+      </div>
+
       <PhotoGallery
         recipeId={recipe.id}
         photos={recipe.photos}
         uploadsEnabled={uploadsEnabled}
       />
 
-      <div className="mt-8 max-w-sm">
-        <NutritionPanel macros={macros} isEstimated={isEstimated} />
-      </div>
+      {editing && (
+        <button
+          onClick={() => {
+            if (confirm(`Delete "${recipe.title}"? This can't be undone.`)) {
+              startTransition(() => void deleteRecipe(recipe.id));
+            }
+          }}
+          disabled={pending}
+          className="btn mt-8 w-full justify-center !py-3 text-muted hover:!border-accent hover:text-accent"
+        >
+          <Trash2 size={15} />
+          Delete recipe
+        </button>
+      )}
     </article>
   );
 }

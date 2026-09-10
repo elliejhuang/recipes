@@ -15,6 +15,7 @@ import {
   groceryItems,
   groceryLists,
   ingredients,
+  learnedIngredients,
   listMembers,
   lists,
   photos,
@@ -26,6 +27,7 @@ import {
   type Recipe,
   type RecipeList,
 } from "@/db/schema";
+import type { LearnedFoods } from "@/lib/nutrition";
 
 export type FullRecipe = Recipe & {
   ingredients: Ingredient[];
@@ -133,6 +135,27 @@ export async function getRecipe(id: number): Promise<FullRecipe | null> {
     photos: recipePhotos,
     listIds: assigned.map((row) => row.listId),
   };
+}
+
+/** Every ingredient taught so far, keyed for `estimateMacros`/`estimateIngredientMacros`. */
+export async function getLearnedFoods(): Promise<LearnedFoods> {
+  const rows = await db.select().from(learnedIngredients);
+  const map: LearnedFoods = {};
+  for (const row of rows) {
+    map[row.name] = {
+      unitFamily: row.unitFamily as LearnedFoods[string]["unitFamily"],
+      unitLabel: row.unitLabel,
+      perBase: {
+        calories: row.caloriesPerBase,
+        proteinG: row.proteinPerBase,
+        carbsG: row.carbsPerBase,
+        fatG: row.fatPerBase,
+        fiberG: row.fiberPerBase,
+        sugarG: row.sugarPerBase,
+      },
+    };
+  }
+  return map;
 }
 
 /* ---------------------------------------------------------------- lists --- */

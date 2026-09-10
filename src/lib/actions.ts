@@ -8,15 +8,21 @@ import {
   groceryItems,
   groceryLists,
   ingredients,
+  learnedIngredients,
   listMembers,
   lists,
   photos,
   recipes,
 } from "@/db/schema";
 import { aggregateGroceries } from "./aggregate-groceries";
-import { estimateMacros, type MacroOverride } from "./nutrition";
+import {
+  estimateMacros,
+  normalizeIngredientName,
+  toLearnedEntry,
+  type MacroOverride,
+} from "./nutrition";
 import { parseIngredientLine } from "./parse-ingredient";
-import { ensureAutoList, getPlanIngredients } from "./queries";
+import { ensureAutoList, getLearnedFoods, getPlanIngredients } from "./queries";
 
 export type RecipeInput = {
   id?: number;
@@ -123,9 +129,11 @@ export async function saveRecipe(input: RecipeInput): Promise<number> {
   // not just when they're missing — otherwise editing the ingredients of a
   // recipe you typed in leaves the old estimate sitting there, quietly wrong.
   if (!hasNutrition || nutritionSource === "estimated") {
+    const learned = await getLearnedFoods();
     const estimate = estimateMacros(
       input.ingredientLines.map(parseIngredientLine),
       input.servings,
+      learned,
     );
     if (estimate.matched > 0) {
       nutrition = estimate.perServing;
@@ -204,7 +212,7 @@ export async function setIngredientNutrition(
   recipeId: number,
   macros: MacroOverride | null,
 ) {
-  await db
+  const [ingredient] = await db
     .update(ingredients)
     .set({
       caloriesOverride: macros?.calories ?? null,
@@ -214,7 +222,47 @@ export async function setIngredientNutrition(
       fiberOverride: macros?.fiberG ?? null,
       sugarOverride: macros?.sugarG ?? null,
     })
-    .where(eq(ingredients.id, ingredientId));
+    .where(eq(ingredients.id, ingredientId))
+    .returning();
+
+  // A filled-in override is a lesson, not just a fix for this one line — it's
+  // taught by name, so the next recipe that calls for the same ingredient
+  // (at whatever quantity) gets it too. Clearing an override only undoes it
+  // for this line; it doesn't make the app forget the lesson.
+  if (macros && ingredient?.name && ingredient.quantity !== null) {
+    const learned = toLearnedEntry(ingredient.quantity, ingredient.unit, macros);
+    if (learned) {
+      await db
+        .insert(learnedIngredients)
+        .values({
+          name: normalizeIngredientName(ingredient.name),
+          unitFamily: learned.unitFamily,
+          unitLabel: learned.unitLabel,
+          caloriesPerBase: learned.perBase.calories,
+          proteinPerBase: learned.perBase.proteinG,
+          carbsPerBase: learned.perBase.carbsG,
+          fatPerBase: learned.perBase.fatG,
+          fiberPerBase: learned.perBase.fiberG,
+          sugarPerBase: learned.perBase.sugarG,
+          updatedAt: new Date(),
+        })
+        .onConflictDoUpdate({
+          target: learnedIngredients.name,
+          set: {
+            unitFamily: learned.unitFamily,
+            unitLabel: learned.unitLabel,
+            caloriesPerBase: learned.perBase.calories,
+            proteinPerBase: learned.perBase.proteinG,
+            carbsPerBase: learned.perBase.carbsG,
+            fatPerBase: learned.perBase.fatG,
+            fiberPerBase: learned.perBase.fiberG,
+            sugarPerBase: learned.perBase.sugarG,
+            updatedAt: new Date(),
+          },
+        });
+    }
+  }
+
   revalidatePath(`/recipes/${recipeId}`);
 }
 
